@@ -1,0 +1,16 @@
+{
+    "bundle": {
+        "modules_identifier": "__BUNDLER_FILES__",
+        "require_mode": {
+            "name": "path",
+            "module_folder_name": "src"
+        }
+    },
+    "generator": {
+        "name": "retain_lines"
+    },
+    "rules": [
+        "remove_comments",
+        "remove_unused_variable"
+    ]
+}
