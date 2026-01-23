@@ -147,7 +147,7 @@ end
 function Gateway:connect()
     print("[GATEWAY] Connecting...")
     
-    self.ws = Websocket.connect("wss://gateway.discord.gg/?v=10&encoding=json")
+    self.ws = WebSocket.connect("wss://gateway.discord.gg/?v=10&encoding=json")
     
     self.ws.OnMessage:Connect(function(msg)
         local data = Utils.jsonDecode(msg)
