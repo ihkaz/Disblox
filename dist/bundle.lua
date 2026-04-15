@@ -253,6 +253,22 @@ local OP_INVALID_SESSION = 9
 local OP_HELLO = 10
 local OP_HEARTBEAT_ACK = 11
 
+local function resolveWebSocketConnect()
+    if WebSocket and WebSocket.connect then
+        return WebSocket.connect
+    end
+
+    if Websocket and Websocket.connect then
+        return Websocket.connect
+    end
+
+    if websocket and websocket.connect then
+        return websocket.connect
+    end
+
+    error("No supported websocket connector found. Expected WebSocket.connect, Websocket.connect, or websocket.connect.", 2)
+end
+
 function Gateway.new(token)
     Utils.assertNonEmptyString(token, "token")
 
@@ -325,7 +341,8 @@ end
 function Gateway:connect()
     print("[GATEWAY]", { status = "connecting" })
 
-    self.ws = Websocket.connect(DISCORD_GATEWAY_URL)
+    local connectWebSocket = resolveWebSocketConnect()
+    self.ws = connectWebSocket(DISCORD_GATEWAY_URL)
 
     self.ws.OnMessage:Connect(function(msg)
         local data = Utils.jsonDecode(msg)
@@ -989,6 +1006,7 @@ function Client.new(options)
     end)
     
     self.gateway:on("INTERACTION_CREATE", function(data)
+        self:emit("interactionCreate", data)
         self.commands:handleInteraction(data)
     end)
     
