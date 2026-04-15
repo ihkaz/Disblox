@@ -245,13 +245,15 @@ local Gateway = {}
 Gateway.__index = Gateway
 
 local DISCORD_GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
-local GATEWAY_INTENTS = 33281
 local OP_DISPATCH = 0
 local OP_HEARTBEAT = 1
 local OP_IDENTIFY = 2
+local OP_RECONNECT = 7
 local OP_INVALID_SESSION = 9
 local OP_HELLO = 10
 local OP_HEARTBEAT_ACK = 11
+
+local DEFAULT_GATEWAY_INTENTS = 1
 
 local function resolveWebSocketConnect()
     if WebSocket and WebSocket.connect then
@@ -269,15 +271,22 @@ local function resolveWebSocketConnect()
     error("No supported websocket connector found. Expected WebSocket.connect, Websocket.connect, or websocket.connect.", 2)
 end
 
-function Gateway.new(token)
+function Gateway.new(token, intents)
     Utils.assertNonEmptyString(token, "token")
+
+    if intents ~= nil then
+        Utils.assertType(intents, "number", "intents")
+    end
 
     local self = setmetatable({}, Gateway)
     self.token = token
+    self.intents = intents or DEFAULT_GATEWAY_INTENTS
     self.ws = nil
     self.heartbeatInterval = nil
     self.lastSequence = nil
     self.sessionId = nil
+    self.resumeGatewayUrl = nil
+    self.lastHeartbeatAcked = true
     self.heartbeatTask = nil
     self.events = {}
     return self
@@ -313,6 +322,11 @@ function Gateway:send(op, data)
     self.ws:Send(Utils.jsonEncode(payload))
 end
 
+function Gateway:heartbeat()
+    self.lastHeartbeatAcked = false
+    self:send(OP_HEARTBEAT, self.lastSequence)
+end
+
 function Gateway:startHeartbeat()
     if self.heartbeatTask then
         task.cancel(self.heartbeatTask)
@@ -321,7 +335,12 @@ function Gateway:startHeartbeat()
     self.heartbeatTask = task.spawn(function()
         while self.ws and self.heartbeatInterval do
             wait(self.heartbeatInterval / 1000)
-            self:send(OP_HEARTBEAT, self.lastSequence)
+
+            if not self.lastHeartbeatAcked then
+                warn("[GATEWAY] Heartbeat ACK missing")
+            end
+
+            self:heartbeat()
         end
     end)
 end
@@ -329,11 +348,11 @@ end
 function Gateway:identify()
     self:send(OP_IDENTIFY, {
         token = self.token,
-        intents = GATEWAY_INTENTS,
+        intents = self.intents,
         properties = {
-            ["$os"] = "windows",
-            ["$browser"] = "disblox",
-            ["$device"] = "disblox"
+            os = "windows",
+            browser = "disblox",
+            device = "disblox"
         }
     })
 end
@@ -358,14 +377,25 @@ function Gateway:connect()
         if data.op == OP_HELLO then
             print("[GATEWAY] Hello received")
             self.heartbeatInterval = data.d.heartbeat_interval
-            self:identify()
             self:startHeartbeat()
+            self:identify()
+
+        elseif data.op == OP_HEARTBEAT then
+            self:heartbeat()
 
         elseif data.op == OP_HEARTBEAT_ACK then
-            return
+            self.lastHeartbeatAcked = true
 
         elseif data.op == OP_DISPATCH then
+            if data.t == "READY" then
+                self.sessionId = data.d.session_id
+                self.resumeGatewayUrl = data.d.resume_gateway_url
+            end
+
             self:emit(data.t, data.d)
+
+        elseif data.op == OP_RECONNECT then
+            warn("[GATEWAY] Reconnect requested")
 
         elseif data.op == OP_INVALID_SESSION then
             warn("[GATEWAY] Invalid session")
@@ -384,6 +414,7 @@ function Gateway:connect()
 
         self.ws = nil
         self.heartbeatInterval = nil
+        self.lastHeartbeatAcked = true
         self:emit("disconnect")
     end)
 
@@ -989,8 +1020,9 @@ function Client.new(options)
     local self = setmetatable({}, Client)
     self.token = options.token
     self.applicationId = options.applicationId
+    self.intents = options.intents
     
-    self.gateway = Gateway.new(self.token)
+    self.gateway = Gateway.new(self.token, self.intents)
     self.rest = Rest.new(self.token, self.applicationId)
     self.commands = CommandHandler.new(self.rest)
     
