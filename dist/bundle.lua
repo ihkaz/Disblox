@@ -254,6 +254,7 @@ local OP_HELLO = 10
 local OP_HEARTBEAT_ACK = 11
 
 local DEFAULT_GATEWAY_INTENTS = 1
+local DEBUG_GATEWAY = true
 
 local function resolveWebSocketConnect()
     if WebSocket and WebSocket.connect then
@@ -370,6 +371,14 @@ function Gateway:connect()
     self.ws.OnMessage:Connect(function(msg)
         local data = Utils.jsonDecode(msg)
 
+        if DEBUG_GATEWAY then
+            print(("[GATEWAY] Received op=%s event=%s sequence=%s"):format(
+                tostring(data.op),
+                tostring(data.t),
+                tostring(data.s)
+            ))
+        end
+
         if data.s then
             self.lastSequence = data.s
         end
@@ -404,8 +413,11 @@ function Gateway:connect()
         end
     end)
 
-    self.ws.OnClose:Connect(function()
-        warn("[GATEWAY] Disconnected")
+    self.ws.OnClose:Connect(function(code, reason)
+        warn(("[GATEWAY] Disconnected code=%s reason=%s"):format(
+            tostring(code),
+            tostring(reason)
+        ))
 
         if self.heartbeatTask then
             task.cancel(self.heartbeatTask)
