@@ -594,8 +594,26 @@ local Utils = __BUNDLER_FILES__.a()
 
 local Runtime = {}
 
+local function assertObject(value, name)
+    local valueType = type(value)
+
+    if valueType ~= "table" and valueType ~= "userdata" then
+        error(("%s must be a table or userdata, got %s"):format(name, valueType), 3)
+    end
+end
+
 local function hasMethod(value, methodName)
-    return type(value) == "table" and type(value[methodName]) == "function"
+    local valueType = type(value)
+
+    if valueType ~= "table" and valueType ~= "userdata" then
+        return false
+    end
+
+    local success, method = pcall(function()
+        return value[methodName]
+    end)
+
+    return success and type(method) == "function"
 end
 
 function Runtime.resolveRequest()
@@ -639,13 +657,16 @@ function Runtime.resolveWebSocketConnect()
 end
 
 function Runtime.connectEvent(target, eventName, callback)
-    Utils.assertTable(target, "target")
+    assertObject(target, "target")
     Utils.assertNonEmptyString(eventName, "eventName")
     Utils.assertFunction(callback, "callback")
 
-    local event = target[eventName]
+    local event = nil
+    local readSuccess = pcall(function()
+        event = target[eventName]
+    end)
 
-    if event and type(event.Connect) == "function" then
+    if readSuccess and event and type(event.Connect) == "function" then
         event:Connect(callback)
         return
     end
@@ -662,16 +683,26 @@ function Runtime.connectEvent(target, eventName, callback)
 end
 
 function Runtime.sendWebSocket(socket, payload)
-    Utils.assertTable(socket, "socket")
+    assertObject(socket, "socket")
     Utils.assertNonEmptyString(payload, "payload")
 
-    if type(socket.Send) == "function" then
-        socket:Send(payload)
+    local sendMethod = nil
+    local sendSuccess = pcall(function()
+        sendMethod = socket.Send
+    end)
+
+    if sendSuccess and type(sendMethod) == "function" then
+        sendMethod(socket, payload)
         return
     end
 
-    if type(socket.send) == "function" then
-        socket:send(payload)
+    local lowerSendMethod = nil
+    local lowerSendSuccess = pcall(function()
+        lowerSendMethod = socket.send
+    end)
+
+    if lowerSendSuccess and type(lowerSendMethod) == "function" then
+        lowerSendMethod(socket, payload)
         return
     end
 
