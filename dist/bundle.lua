@@ -1,12 +1,15 @@
 local __BUNDLER_FILES__={cache={}::any}do do local function __modImpl()local Utils = {}
-local HttpService = game:GetService("HttpService")
 
 local EPHEMERAL_MESSAGE_FLAG = 64
 local IS_COMPONENTS_V2_MESSAGE_FLAG = 32768
 
+local function getHttpService()
+    return game:GetService("HttpService")
+end
+
 function Utils.jsonEncode(data)
     local success, result = pcall(function()
-        return HttpService:JSONEncode(data)
+        return getHttpService():JSONEncode(data)
     end)
 
     if not success then
@@ -18,7 +21,7 @@ end
 
 function Utils.jsonDecode(str)
     local success, result = pcall(function()
-        return HttpService:JSONDecode(str)
+        return getHttpService():JSONDecode(str)
     end)
 
     if not success then
@@ -1104,6 +1107,39 @@ local function setField(builder, key, value)
     return setmetatable({ data = data }, getmetatable(builder))
 end
 
+local function getComponentData(component, name)
+    Utils.assertTable(component, name)
+    Utils.assertType(component.toJSON, "function", name .. ".toJSON")
+
+    return component:toJSON()
+end
+
+local function assertComponentType(componentData, allowedTypes, name)
+    if not allowedTypes[componentData.type] then
+        error(("%s has unsupported component type: %s"):format(name, tostring(componentData.type)), 3)
+    end
+end
+
+local function countComponents(componentData)
+    local count = 1
+
+    if componentData.components then
+        for _, child in ipairs(componentData.components) do
+            count = count + countComponents(child)
+        end
+    end
+
+    if componentData.accessory then
+        count = count + countComponents(componentData.accessory)
+    end
+
+    return count
+end
+
+local function isAttachmentUrl(url)
+    return string.sub(url, 1, 13) == "attachment://"
+end
+
 local SlashCommandOptionBuilder = {}
 SlashCommandOptionBuilder.__index = SlashCommandOptionBuilder
 
@@ -1384,7 +1420,15 @@ end
 function ButtonBuilder:setCustomId(customId)
     Utils.assertNonEmptyString(customId, "customId")
 
-    return setField(self, "custom_id", customId)
+    local data = copyMap(self.data)
+    data.custom_id = customId
+
+    if data.style == Builders.ButtonStyle.Link then
+        data.style = Builders.ButtonStyle.Primary
+        data.url = nil
+    end
+
+    return setmetatable({ data = data }, ButtonBuilder)
 end
 
 function ButtonBuilder:setLabel(label)
@@ -1429,12 +1473,26 @@ function ButtonBuilder:toJSON()
         data.style = Builders.ButtonStyle.Primary
     end
 
-    if data.url == nil then
+    if data.style == Builders.ButtonStyle.Link then
+        Utils.assertNonEmptyString(data.url, "button.url")
+        data.custom_id = nil
+    elseif data.url == nil then
         Utils.assertNonEmptyString(data.custom_id, "button.custom_id")
+    else
+        error("button.url is only valid for link buttons", 2)
     end
 
     return data
 end
+
+local ACTION_ROW_CHILD_COMPONENT_TYPES = {
+    [COMPONENT_BUTTON] = true,
+    [COMPONENT_STRING_SELECT] = true,
+    [COMPONENT_USER_SELECT] = true,
+    [COMPONENT_ROLE_SELECT] = true,
+    [COMPONENT_MENTIONABLE_SELECT] = true,
+    [COMPONENT_CHANNEL_SELECT] = true
+}
 
 local ActionRowBuilder = {}
 ActionRowBuilder.__index = ActionRowBuilder
@@ -1449,18 +1507,37 @@ function ActionRowBuilder.new()
 end
 
 function ActionRowBuilder:addComponent(component)
-    Utils.assertTable(component, "component")
-    Utils.assertType(component.toJSON, "function", "component.toJSON")
+    local componentData = getComponentData(component, "component")
+    assertComponentType(componentData, ACTION_ROW_CHILD_COMPONENT_TYPES, "component")
 
     local data = copyMap(self.data)
     local components = data.components and copyArray(data.components) or {}
-    table.insert(components, component:toJSON())
+
+    if componentData.type == COMPONENT_BUTTON then
+        if #components >= 5 then
+            error("actionRow.components cannot contain more than five buttons", 2)
+        end
+
+        if components[1] and components[1].type ~= COMPONENT_BUTTON then
+            error("actionRow.components cannot mix buttons and select menus", 2)
+        end
+    else
+        if #components > 0 then
+            error("actionRow.components can contain only one select menu", 2)
+        end
+    end
+
+    table.insert(components, componentData)
     data.components = components
 
     return setmetatable({ data = data }, ActionRowBuilder)
 end
 
 function ActionRowBuilder:toJSON()
+    if #self.data.components == 0 then
+        error("actionRow.components must contain at least one component", 2)
+    end
+
     return copyMap(self.data)
 end
 
@@ -1561,6 +1638,10 @@ function MediaGalleryBuilder:toJSON()
         error("mediaGallery.items must contain at least one item", 2)
     end
 
+    if #self.data.items > 10 then
+        error("mediaGallery.items must contain no more than ten items", 2)
+    end
+
     return copyMap(self.data)
 end
 
@@ -1577,6 +1658,10 @@ end
 
 function FileBuilder:setURL(url)
     Utils.assertNonEmptyString(url, "url")
+
+    if not isAttachmentUrl(url) then
+        error("file.url must use attachment://<filename>", 2)
+    end
 
     return setField(self, "file", { url = url })
 end
@@ -1621,6 +1706,15 @@ function SeparatorBuilder:toJSON()
     return copyMap(self.data)
 end
 
+local SECTION_CHILD_COMPONENT_TYPES = {
+    [COMPONENT_TEXT_DISPLAY] = true
+}
+
+local SECTION_ACCESSORY_COMPONENT_TYPES = {
+    [COMPONENT_BUTTON] = true,
+    [COMPONENT_THUMBNAIL] = true
+}
+
 local SectionBuilder = {}
 SectionBuilder.__index = SectionBuilder
 
@@ -1634,16 +1728,11 @@ function SectionBuilder.new()
 end
 
 function SectionBuilder:addTextDisplay(textDisplay)
-    Utils.assertTable(textDisplay, "textDisplay")
-    Utils.assertType(textDisplay.toJSON, "function", "textDisplay.toJSON")
+    local component = getComponentData(textDisplay, "textDisplay")
+    assertComponentType(component, SECTION_CHILD_COMPONENT_TYPES, "textDisplay")
 
     local data = copyMap(self.data)
     local components = data.components and copyArray(data.components) or {}
-    local component = textDisplay:toJSON()
-
-    if component.type ~= COMPONENT_TEXT_DISPLAY then
-        error("section components must be text display components", 2)
-    end
 
     table.insert(components, component)
     data.components = components
@@ -1652,10 +1741,10 @@ function SectionBuilder:addTextDisplay(textDisplay)
 end
 
 function SectionBuilder:setAccessory(accessory)
-    Utils.assertTable(accessory, "accessory")
-    Utils.assertType(accessory.toJSON, "function", "accessory.toJSON")
+    local component = getComponentData(accessory, "accessory")
+    assertComponentType(component, SECTION_ACCESSORY_COMPONENT_TYPES, "accessory")
 
-    return setField(self, "accessory", accessory:toJSON())
+    return setField(self, "accessory", component)
 end
 
 function SectionBuilder:toJSON()
@@ -1667,8 +1756,19 @@ function SectionBuilder:toJSON()
         error("section.components must contain no more than three text displays", 2)
     end
 
+    Utils.assertTable(self.data.accessory, "section.accessory")
+
     return copyMap(self.data)
 end
+
+local CONTAINER_CHILD_COMPONENT_TYPES = {
+    [COMPONENT_ACTION_ROW] = true,
+    [COMPONENT_TEXT_DISPLAY] = true,
+    [COMPONENT_SECTION] = true,
+    [COMPONENT_MEDIA_GALLERY] = true,
+    [COMPONENT_SEPARATOR] = true,
+    [COMPONENT_FILE] = true
+}
 
 local ContainerBuilder = {}
 ContainerBuilder.__index = ContainerBuilder
@@ -1683,12 +1783,17 @@ function ContainerBuilder.new()
 end
 
 function ContainerBuilder:addComponent(component)
-    Utils.assertTable(component, "component")
-    Utils.assertType(component.toJSON, "function", "component.toJSON")
+    local componentData = getComponentData(component, "component")
+    assertComponentType(componentData, CONTAINER_CHILD_COMPONENT_TYPES, "component")
 
     local data = copyMap(self.data)
     local components = data.components and copyArray(data.components) or {}
-    table.insert(components, component:toJSON())
+
+    if #components >= 10 then
+        error("container.components cannot contain more than ten components", 2)
+    end
+
+    table.insert(components, componentData)
     data.components = components
 
     return setmetatable({ data = data }, ContainerBuilder)
@@ -1717,6 +1822,16 @@ end
 local MessageBuilder = {}
 MessageBuilder.__index = MessageBuilder
 
+local MESSAGE_TOP_LEVEL_COMPONENT_TYPES = {
+    [COMPONENT_ACTION_ROW] = true,
+    [COMPONENT_TEXT_DISPLAY] = true,
+    [COMPONENT_SECTION] = true,
+    [COMPONENT_MEDIA_GALLERY] = true,
+    [COMPONENT_FILE] = true,
+    [COMPONENT_SEPARATOR] = true,
+    [COMPONENT_CONTAINER] = true
+}
+
 function MessageBuilder.new()
     return setmetatable({
         data = {
@@ -1727,12 +1842,13 @@ function MessageBuilder.new()
 end
 
 function MessageBuilder:addComponent(component)
-    Utils.assertTable(component, "component")
-    Utils.assertType(component.toJSON, "function", "component.toJSON")
+    local componentData = getComponentData(component, "component")
+    assertComponentType(componentData, MESSAGE_TOP_LEVEL_COMPONENT_TYPES, "component")
 
     local data = copyMap(self.data)
     local components = data.components and copyArray(data.components) or {}
-    table.insert(components, component:toJSON())
+
+    table.insert(components, componentData)
     data.components = components
 
     return setmetatable({ data = data }, MessageBuilder)
@@ -1750,6 +1866,15 @@ end
 function MessageBuilder:toJSON()
     if #self.data.components == 0 then
         error("message.components must contain at least one component", 2)
+    end
+
+    local componentCount = 0
+    for _, component in ipairs(self.data.components) do
+        componentCount = componentCount + countComponents(component)
+    end
+
+    if componentCount > 40 then
+        error("message.components cannot contain more than forty total components", 2)
     end
 
     return {
