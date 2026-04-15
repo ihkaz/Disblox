@@ -339,6 +339,10 @@ function Gateway:identify()
 end
 
 function Gateway:connect()
+    if self.ws then
+        error("Gateway is already connected. Do not call client:login() more than once for the same client.", 2)
+    end
+
     print("[GATEWAY]", { status = "connecting" })
 
     local connectWebSocket = resolveWebSocketConnect()
@@ -378,6 +382,8 @@ function Gateway:connect()
             self.heartbeatTask = nil
         end
 
+        self.ws = nil
+        self.heartbeatInterval = nil
         self:emit("disconnect")
     end)
 
