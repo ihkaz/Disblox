@@ -490,6 +490,22 @@ function Runtime.wait(seconds)
     error("No wait function found. Expected task.wait or wait.", 2)
 end
 
+function Runtime.unpack(values, firstIndex, lastIndex)
+    Utils.assertTable(values, "values")
+    Utils.assertNumber(firstIndex, "firstIndex")
+    Utils.assertNumber(lastIndex, "lastIndex")
+
+    local environment = getEnvironment()
+    local tableLibrary = getValue(environment, "table")
+    local unpackFunction = getValue(tableLibrary, "unpack") or getValue(environment, "unpack")
+
+    if type(unpackFunction) == "function" then
+        return unpackFunction(values, firstIndex, lastIndex)
+    end
+
+    error("No table unpack function found. Expected table.unpack or unpack.", 2)
+end
+
 function Runtime.warn(message, fields)
     Utils.assertNonEmptyString(message, "message")
 
@@ -865,7 +881,7 @@ function Gateway:emit(eventName, ...)
 
     for _, callback in ipairs(callbacks) do
         Runtime.spawn(function()
-            callback(table.unpack(args, 1, argCount))
+            callback(Runtime.unpack(args, 1, argCount))
         end)
     end
 end
@@ -1185,7 +1201,7 @@ function Rest.new(token, applicationId)
     local self = setmetatable({}, Rest)
     self.token = token
     self.applicationId = applicationId
-    self.request = Runtime.resolveRequest()
+    self.request = nil
     self.maxRetries = 3
     return self
 end
@@ -1196,11 +1212,17 @@ function Rest:requestJson(method, endpoint, body)
 
     local lastResponse = nil
     local lastError = nil
+    local request = self.request
+
+    if not request then
+        request = Runtime.resolveRequest()
+        self.request = request
+    end
 
     for attempt = 1, self.maxRetries do
         local requestBody = encodeBody(body)
         local success, response = pcall(function()
-            return self.request({
+            return request({
                 Url = API_URL .. endpoint,
                 Method = method,
                 Headers = {
@@ -1480,7 +1502,7 @@ function Client:emit(eventName, ...)
 
     for _, callback in ipairs(callbacks) do
         Runtime.spawn(function()
-            callback(table.unpack(args, 1, argCount))
+            callback(Runtime.unpack(args, 1, argCount))
         end)
     end
 end
