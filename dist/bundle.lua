@@ -996,6 +996,34 @@ function Runtime.closeWebSocket(socket)
     callMethod(socket, "close")
 end
 
+function Runtime.firstString(...)
+    local argumentCount = select("#", ...)
+
+    for index = 1, argumentCount do
+        local value = select(index, ...)
+
+        if type(value) == "string" then
+            return value
+        end
+    end
+
+    error("Expected at least one string argument.", 2)
+end
+
+function Runtime.firstNumber(...)
+    local argumentCount = select("#", ...)
+
+    for index = 1, argumentCount do
+        local value = select(index, ...)
+
+        if type(value) == "number" then
+            return value
+        end
+    end
+
+    return nil
+end
+
 function Runtime.spawn(callback)
     Utils.assertFunction(callback, "callback")
 
@@ -1402,9 +1430,9 @@ function Gateway:identify()
         token = self.token,
         intents = self.intents,
         properties = {
-            os = "windows",
-            browser = "disblox",
-            device = "disblox"
+            ["$os"] = "windows",
+            ["$browser"] = "disblox",
+            ["$device"] = "disblox"
         }
     })
 end
@@ -1529,12 +1557,15 @@ function Gateway:connectSocket(url, resume)
 
     local socket = self.ws
 
-    Runtime.connectEvent(socket, "OnMessage", function(message)
+    Runtime.connectEvent(socket, "OnMessage", function(...)
         if self.ws ~= socket then
             return
         end
 
+        local arguments = { ... }
+
         local success, err = pcall(function()
+            local message = Runtime.firstString(Runtime.unpack(arguments, 1, #arguments))
             self:handleMessage(message)
         end)
 
@@ -1544,9 +1575,23 @@ function Gateway:connectSocket(url, resume)
         end
     end)
 
-    Runtime.connectEvent(socket, "OnClose", function(code, reason)
+    Runtime.connectEvent(socket, "OnClose", function(...)
         if self.ws ~= socket then
             return
+        end
+
+        local arguments = { ... }
+        local code = Runtime.firstNumber(Runtime.unpack(arguments, 1, #arguments))
+        local reason = nil
+        local argumentCount = #arguments
+
+        for index = 1, argumentCount do
+            local value = arguments[index]
+
+            if type(value) == "string" then
+                reason = value
+                break
+            end
         end
 
         self:handleClose(code, reason)
