@@ -666,9 +666,16 @@ function Runtime.connectEvent(target, eventName, callback)
         event = target[eventName]
     end)
 
-    if readSuccess and event and type(event.Connect) == "function" then
-        event:Connect(callback)
-        return
+    if readSuccess and event then
+        local connectMethod = nil
+        local connectSuccess = pcall(function()
+            connectMethod = event.Connect
+        end)
+
+        if connectSuccess and type(connectMethod) == "function" then
+            connectMethod(event, callback)
+            return
+        end
     end
 
     local success = pcall(function()
@@ -709,6 +716,32 @@ function Runtime.sendWebSocket(socket, payload)
     error("WebSocket send method not found. Expected Send or send.", 2)
 end
 
+function Runtime.closeWebSocket(socket)
+    assertObject(socket, "socket")
+
+    local closeMethod = nil
+    local closeSuccess = pcall(function()
+        closeMethod = socket.Close
+    end)
+
+    if closeSuccess and type(closeMethod) == "function" then
+        closeMethod(socket)
+        return
+    end
+
+    local lowerCloseMethod = nil
+    local lowerCloseSuccess = pcall(function()
+        lowerCloseMethod = socket.close
+    end)
+
+    if lowerCloseSuccess and type(lowerCloseMethod) == "function" then
+        lowerCloseMethod(socket)
+        return
+    end
+
+    error("WebSocket close method not found. Expected Close or close.", 2)
+end
+
 return Runtime
 end function __BUNDLER_FILES__.c():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.c if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.c=v end return v.c end end do local function __modImpl()
 local Runtime = __BUNDLER_FILES__.c()
@@ -723,6 +756,7 @@ local DEFAULT_GATEWAY_INTENTS = 1
 local OP_DISPATCH = 0
 local OP_HEARTBEAT = 1
 local OP_IDENTIFY = 2
+local OP_RESUME = 6
 local OP_RECONNECT = 7
 local OP_INVALID_SESSION = 9
 local OP_HELLO = 10
@@ -734,6 +768,16 @@ end
 
 local function warnGateway(message)
     warn(("[GATEWAY] %s"):format(message))
+end
+
+local function withGatewayQuery(url)
+    Utils.assertNonEmptyString(url, "url")
+
+    if string.find(url, "?", 1, true) then
+        return url
+    end
+
+    return url .. "?v=10&encoding=json"
 end
 
 function Gateway.new(token, intents)
@@ -753,6 +797,7 @@ function Gateway.new(token, intents)
     self.lastHeartbeatAcked = true
     self.sessionId = nil
     self.resumeGatewayUrl = nil
+    self.shouldResume = false
     self.events = {}
     return self
 end
@@ -808,11 +853,22 @@ function Gateway:startHeartbeat()
     self:stopHeartbeat()
 
     self.heartbeatTask = task.spawn(function()
+        wait((self.heartbeatInterval / 1000) * math.random())
+
+        if not self.ws or not self.heartbeatInterval then
+            return
+        end
+
+        self:heartbeat()
+
         while self.ws and self.heartbeatInterval do
             wait(self.heartbeatInterval / 1000)
 
             if not self.lastHeartbeatAcked then
                 warnGateway("Heartbeat ACK missing")
+                self.heartbeatTask = nil
+                self:reconnect(true)
+                return
             end
 
             self:heartbeat()
@@ -832,10 +888,22 @@ function Gateway:identify()
     })
 end
 
+function Gateway:resume()
+    Utils.assertNonEmptyString(self.sessionId, "sessionId")
+    Utils.assertNonEmptyString(self.resumeGatewayUrl, "resumeGatewayUrl")
+
+    self:send(OP_RESUME, {
+        token = self.token,
+        session_id = self.sessionId,
+        seq = self.lastSequence
+    })
+end
+
 function Gateway:handleDispatch(eventName, eventData)
     if eventName == "READY" then
         self.sessionId = eventData.session_id
         self.resumeGatewayUrl = eventData.resume_gateway_url
+        self.shouldResume = true
     end
 
     self:emit(eventName, eventData)
@@ -858,7 +926,12 @@ function Gateway:handleMessage(message)
         self.heartbeatInterval = payload.d.heartbeat_interval
         logGateway("Hello received")
         self:startHeartbeat()
-        self:identify()
+
+        if self.shouldResume then
+            self:resume()
+        else
+            self:identify()
+        end
     elseif payload.op == OP_HEARTBEAT then
         self:heartbeat()
     elseif payload.op == OP_HEARTBEAT_ACK then
@@ -868,10 +941,11 @@ function Gateway:handleMessage(message)
     elseif payload.op == OP_RECONNECT then
         warnGateway("Reconnect requested")
         self:emit("reconnect")
+        self:reconnect(true)
     elseif payload.op == OP_INVALID_SESSION then
         warnGateway("Invalid session")
         wait(5)
-        self:identify()
+        self:reconnect(payload.d == true)
     end
 end
 
@@ -884,25 +958,69 @@ function Gateway:handleClose(code, reason)
     self:emit("disconnect", code, reason)
 end
 
+function Gateway:connectTo(url, shouldResume)
+    Utils.assertNonEmptyString(url, "url")
+    Utils.assertBoolean(shouldResume, "shouldResume")
+    logGateway("Connecting")
+
+    local connectWebSocket = Runtime.resolveWebSocketConnect()
+    self.shouldResume = shouldResume
+    self.ws = connectWebSocket(withGatewayQuery(url))
+    local socket = self.ws
+
+    Runtime.connectEvent(socket, "OnMessage", function(message)
+        if self.ws ~= socket then
+            return
+        end
+
+        self:handleMessage(message)
+    end)
+
+    Runtime.connectEvent(socket, "OnClose", function(code, reason)
+        if self.ws ~= socket then
+            return
+        end
+
+        self:handleClose(code, reason)
+    end)
+
+    logGateway("Socket opened")
+end
+
+function Gateway:closeSocket()
+    if not self.ws then
+        return
+    end
+
+    local socket = self.ws
+    self.ws = nil
+    self:stopHeartbeat()
+    Runtime.closeWebSocket(socket)
+end
+
+function Gateway:reconnect(shouldResume)
+    Utils.assertBoolean(shouldResume, "shouldResume")
+    self:closeSocket()
+    self.heartbeatInterval = nil
+    self.lastHeartbeatAcked = true
+
+    if shouldResume and self.resumeGatewayUrl and self.sessionId then
+        self:connectTo(self.resumeGatewayUrl, true)
+        return
+    end
+
+    self.sessionId = nil
+    self.resumeGatewayUrl = nil
+    self.lastSequence = nil
+    self:connectTo(DISCORD_GATEWAY_URL, false)
+end
+
 function Gateway:connect()
     if self.ws then
         error("Gateway is already connected. Do not call client:login() more than once for the same client.", 2)
     end
 
-    logGateway("Connecting")
-
-    local connectWebSocket = Runtime.resolveWebSocketConnect()
-    self.ws = connectWebSocket(DISCORD_GATEWAY_URL)
-
-    Runtime.connectEvent(self.ws, "OnMessage", function(message)
-        self:handleMessage(message)
-    end)
-
-    Runtime.connectEvent(self.ws, "OnClose", function(code, reason)
-        self:handleClose(code, reason)
-    end)
-
-    logGateway("Socket opened")
+    self:connectTo(DISCORD_GATEWAY_URL, false)
 end
 
 return Gateway
