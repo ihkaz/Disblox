@@ -1,14 +1,31 @@
-local __BUNDLER_FILES__={cache={}::any}do do local function __modImpl()local Utils = {}
+local __BUNDLER_FILES__={cache={}::any}do do local function __modImpl()
+
+local Utils = {}
 
 local EPHEMERAL_MESSAGE_FLAG = 64
 local IS_COMPONENTS_V2_MESSAGE_FLAG = 32768
 
+local function getEnvironment()
+    local success, environment = pcall(function()
+        return getfenv(0)
+    end)
+
+    if success and type(environment) == "table" then
+        return environment
+    end
+
+    return _G
+end
+
 local function getHttpService()
-    if not game or not game.GetService then
+    local environment = getEnvironment()
+    local gameInstance = environment.game
+
+    if not gameInstance or not gameInstance.GetService then
         error("HttpService is unavailable: global game:GetService is missing", 3)
     end
 
-    return game:GetService("HttpService")
+    return gameInstance:GetService("HttpService")
 end
 
 function Utils.assertType(value, expectedType, name)
@@ -284,6 +301,216 @@ Utils.MessageFlags = {
 
 return Utils
 end function __BUNDLER_FILES__.a():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.a if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.a=v end return v.c end end do local function __modImpl()
+
+
+local Utils = __BUNDLER_FILES__.a()
+
+local Runtime = {}
+
+local function getEnvironment()
+    local success, environment = pcall(function()
+        return getfenv(0)
+    end)
+
+    if success and type(environment) == "table" then
+        return environment
+    end
+
+    return _G
+end
+
+local function getValue(container, key)
+    if type(container) ~= "table" and type(container) ~= "userdata" then
+        return nil
+    end
+
+    local success, value = pcall(function()
+        return container[key]
+    end)
+
+    if success then
+        return value
+    end
+
+    return nil
+end
+
+local function callMethod(target, methodName, ...)
+    local method = getValue(target, methodName)
+
+    if type(method) ~= "function" then
+        error(("Method %s is not available"):format(methodName), 3)
+    end
+
+    return method(target, ...)
+end
+
+local function assertObject(value, name)
+    local valueType = type(value)
+
+    if valueType ~= "table" and valueType ~= "userdata" then
+        error(("%s must be a table or userdata, got %s"):format(name, valueType), 3)
+    end
+end
+
+function Runtime.resolveRequest()
+    local environment = getEnvironment()
+    local http = getValue(environment, "http")
+    local syn = getValue(environment, "syn")
+
+    local candidates = {
+        getValue(environment, "request"),
+        getValue(environment, "http_request"),
+        getValue(http, "request"),
+        getValue(syn, "request")
+    }
+
+    for _, candidate in ipairs(candidates) do
+        if type(candidate) == "function" then
+            return candidate
+        end
+    end
+
+    error("No executor HTTP request function found. Expected request, http_request, http.request, or syn.request.", 2)
+end
+
+function Runtime.resolveWebSocketConnect()
+    local environment = getEnvironment()
+    local syn = getValue(environment, "syn")
+
+    local websocketCandidates = {
+        getValue(environment, "WebSocket"),
+        getValue(environment, "Websocket"),
+        getValue(environment, "websocket"),
+        getValue(syn, "websocket")
+    }
+
+    for _, websocket in ipairs(websocketCandidates) do
+        local connect = getValue(websocket, "connect")
+
+        if type(connect) == "function" then
+            return connect
+        end
+    end
+
+    error("No executor WebSocket connector found. Expected WebSocket.connect.", 2)
+end
+
+function Runtime.connectEvent(target, eventName, callback)
+    assertObject(target, "target")
+    Utils.assertNonEmptyString(eventName, "eventName")
+    Utils.assertFunction(callback, "callback")
+
+    local event = getValue(target, eventName)
+    local connect = getValue(event, "Connect")
+
+    if type(connect) == "function" then
+        connect(event, callback)
+        return
+    end
+
+    local success = pcall(function()
+        target[eventName] = callback
+    end)
+
+    if success then
+        return
+    end
+
+    error(("WebSocket event %s is not connectable. Expected %s:Connect(callback)."):format(eventName, eventName), 2)
+end
+
+function Runtime.sendWebSocket(socket, payload)
+    assertObject(socket, "socket")
+    Utils.assertNonEmptyString(payload, "payload")
+
+    local send = getValue(socket, "Send")
+
+    if type(send) == "function" then
+        send(socket, payload)
+        return
+    end
+
+    callMethod(socket, "send", payload)
+end
+
+function Runtime.closeWebSocket(socket)
+    assertObject(socket, "socket")
+
+    local close = getValue(socket, "Close")
+
+    if type(close) == "function" then
+        close(socket)
+        return
+    end
+
+    callMethod(socket, "close")
+end
+
+function Runtime.spawn(callback)
+    Utils.assertFunction(callback, "callback")
+
+    local environment = getEnvironment()
+    local taskLibrary = getValue(environment, "task")
+    local spawn = getValue(taskLibrary, "spawn") or getValue(environment, "spawn")
+
+    if type(spawn) ~= "function" then
+        error("No task spawn function found. Expected task.spawn or spawn.", 2)
+    end
+
+    return spawn(callback)
+end
+
+function Runtime.cancel(thread)
+    local environment = getEnvironment()
+    local taskLibrary = getValue(environment, "task")
+    local cancel = getValue(taskLibrary, "cancel")
+
+    if type(cancel) == "function" and thread ~= nil then
+        cancel(thread)
+    end
+end
+
+function Runtime.wait(seconds)
+    Utils.assertNumber(seconds, "seconds")
+
+    local environment = getEnvironment()
+    local taskLibrary = getValue(environment, "task")
+    local taskWait = getValue(taskLibrary, "wait")
+    local globalWait = getValue(environment, "wait")
+
+    if type(taskWait) == "function" then
+        return taskWait(seconds)
+    end
+
+    if type(globalWait) == "function" then
+        return globalWait(seconds)
+    end
+
+    error("No wait function found. Expected task.wait or wait.", 2)
+end
+
+function Runtime.warn(message, fields)
+    Utils.assertNonEmptyString(message, "message")
+
+    if fields ~= nil then
+        Utils.assertTable(fields, "fields")
+    end
+
+    local environment = getEnvironment()
+    local warnFunction = getValue(environment, "warn")
+
+    if type(warnFunction) == "function" then
+        warnFunction(message, fields)
+        return
+    end
+
+    print(message, fields)
+end
+
+return Runtime
+end function __BUNDLER_FILES__.b():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.b if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.b=v end return v.c end end do local function __modImpl()
+local Runtime = __BUNDLER_FILES__.b()
 local Utils = __BUNDLER_FILES__.a()
 
 local CommandHandler = {}
@@ -293,22 +520,22 @@ local INTERACTION_APPLICATION_COMMAND = 2
 local INTERACTION_MESSAGE_COMPONENT = 3
 local OPTION_USER = 6
 
-local function resolveCommandData(options)
+local function commandPayload(options)
     if options.data then
-        local commandData = Utils.toJSONValue(options.data, "options.data")
-        Utils.assertTable(commandData, "commandData")
-        return commandData
+        local payload = Utils.toJSONValue(options.data, "options.data")
+        Utils.assertTable(payload, "options.data")
+        return payload
     end
 
     return {
+        type = 1,
         name = options.name,
         description = options.description,
-        options = options.options,
-        type = 1
+        options = options.options
     }
 end
 
-local function getInteractionUser(interaction)
+local function interactionUser(interaction)
     if interaction.member and interaction.member.user then
         return interaction.member.user
     end
@@ -316,7 +543,7 @@ local function getInteractionUser(interaction)
     return interaction.user
 end
 
-local function getOption(interaction, name)
+local function findOption(interaction, name)
     if not interaction.data or not interaction.data.options then
         return nil
     end
@@ -330,7 +557,11 @@ local function getOption(interaction, name)
     return nil
 end
 
-local function getResolvedUser(interaction, option)
+local function resolvedUser(interaction, option)
+    if not option or option.type ~= OPTION_USER then
+        return nil
+    end
+
     if not interaction.data.resolved or not interaction.data.resolved.users then
         return nil
     end
@@ -338,7 +569,11 @@ local function getResolvedUser(interaction, option)
     return interaction.data.resolved.users[option.value]
 end
 
-local function getResolvedMember(interaction, option)
+local function resolvedMember(interaction, option)
+    if not option or option.type ~= OPTION_USER then
+        return nil
+    end
+
     if not interaction.data.resolved or not interaction.data.resolved.members then
         return nil
     end
@@ -346,43 +581,24 @@ local function getResolvedMember(interaction, option)
     return interaction.data.resolved.members[option.value]
 end
 
-local function replyWithCommandError(interactionObj, commandName, err)
-    warn(("[COMMAND ERROR] %s: %s"):format(tostring(commandName), tostring(err)))
-
-    local success, replyError = pcall(function()
-        interactionObj.reply({
-            content = "An error occurred while executing this command.",
-            ephemeral = true
-        })
-    end)
-
-    if not success then
-        warn(("[COMMAND ERROR REPLY FAILED] %s: %s"):format(tostring(commandName), tostring(replyError)))
-    end
-end
-
-local function buildSlashCommandInteraction(self, interaction)
+local function slashInteraction(self, interaction)
     return {
         id = interaction.id,
         token = interaction.token,
-        user = getInteractionUser(interaction),
+        type = interaction.type,
+        commandName = interaction.data and interaction.data.name or nil,
+        user = interactionUser(interaction),
         member = interaction.member,
-        guild_id = interaction.guild_id,
-        channel_id = interaction.channel_id,
+        guildId = interaction.guild_id,
+        channelId = interaction.channel_id,
         data = interaction.data,
 
         reply = function(options)
-            local response = Utils.normalizeMessageOptions(options)
+            return self.rest:replyInteraction(interaction.id, interaction.token, options)
+        end,
 
-            return self.rest:replyInteraction(
-                interaction.id,
-                interaction.token,
-                response.content,
-                response.ephemeral,
-                response.embeds,
-                response.components,
-                response.flags
-            )
+        deferReply = function(ephemeral)
+            return self.rest:deferReply(interaction.id, interaction.token, ephemeral == true)
         end,
 
         defer = function(ephemeral)
@@ -390,84 +606,47 @@ local function buildSlashCommandInteraction(self, interaction)
         end,
 
         editReply = function(options)
-            local response = Utils.normalizeEditOptions(options)
-
-            return self.rest:editInteractionResponse(
-                interaction.token,
-                response.content,
-                response.embeds,
-                response.components,
-                response.flags
-            )
+            return self.rest:editInteractionResponse(interaction.token, options)
         end,
 
         getOption = function(name)
             Utils.assertNonEmptyString(name, "name")
 
-            local option = getOption(interaction, name)
+            local option = findOption(interaction, name)
             return option and option.value or nil
         end,
 
         getUser = function(name)
             Utils.assertNonEmptyString(name, "name")
-
-            local option = getOption(interaction, name)
-            if not option or option.type ~= OPTION_USER then
-                return nil
-            end
-
-            return getResolvedUser(interaction, option)
+            return resolvedUser(interaction, findOption(interaction, name))
         end,
 
         getMember = function(name)
             Utils.assertNonEmptyString(name, "name")
-
-            local option = getOption(interaction, name)
-            if not option or option.type ~= OPTION_USER then
-                return nil
-            end
-
-            return getResolvedMember(interaction, option)
+            return resolvedMember(interaction, findOption(interaction, name))
         end
     }
 end
 
-local function buildComponentInteraction(self, interaction, customId)
+local function componentInteraction(self, interaction)
     return {
         id = interaction.id,
         token = interaction.token,
-        user = getInteractionUser(interaction),
+        type = interaction.type,
+        customId = interaction.data and interaction.data.custom_id or nil,
+        user = interactionUser(interaction),
         member = interaction.member,
-        guild_id = interaction.guild_id,
-        channel_id = interaction.channel_id,
+        guildId = interaction.guild_id,
+        channelId = interaction.channel_id,
         message = interaction.message,
-        customId = customId,
-
-        update = function(options)
-            local response = Utils.normalizeEditOptions(options)
-
-            return self.rest:updateComponent(
-                interaction.id,
-                interaction.token,
-                response.content,
-                response.embeds,
-                response.components,
-                response.flags
-            )
-        end,
+        data = interaction.data,
 
         reply = function(options)
-            local response = Utils.normalizeMessageOptions(options)
+            return self.rest:replyInteraction(interaction.id, interaction.token, options)
+        end,
 
-            return self.rest:replyInteraction(
-                interaction.id,
-                interaction.token,
-                response.content,
-                response.ephemeral,
-                response.embeds,
-                response.components,
-                response.flags
-            )
+        update = function(options)
+            return self.rest:updateInteraction(interaction.id, interaction.token, options)
         end,
 
         deferUpdate = function()
@@ -480,9 +659,9 @@ function CommandHandler.new(rest)
     Utils.assertTable(rest, "rest")
 
     local self = setmetatable({}, CommandHandler)
+    self.rest = rest
     self.commands = {}
     self.buttons = {}
-    self.rest = rest
     return self
 end
 
@@ -490,73 +669,77 @@ function CommandHandler:registerCommand(options)
     Utils.assertTable(options, "options")
     Utils.assertFunction(options.execute, "options.execute")
 
-    local commandData = resolveCommandData(options)
-    Utils.assertNonEmptyString(commandData.name, "commandData.name")
-    Utils.assertNonEmptyString(commandData.description, "commandData.description")
+    local payload = commandPayload(options)
+    Utils.assertNonEmptyString(payload.name, "command.name")
+    Utils.assertNonEmptyString(payload.description, "command.description")
 
-    self.commands[commandData.name] = {
-        data = commandData,
+    self.commands[payload.name] = {
+        data = payload,
         execute = options.execute
     }
 
-    print(("[COMMAND] Registered %s"):format(commandData.name))
+    print(("[COMMAND] Loaded /%s"):format(payload.name))
+    return self
+end
+
+function CommandHandler:registerButton(customId, execute)
+    Utils.assertNonEmptyString(customId, "customId")
+    Utils.assertFunction(execute, "execute")
+
+    self.buttons[customId] = execute
+    print(("[BUTTON] Loaded %s"):format(customId))
+    return self
 end
 
 function CommandHandler:registerAll()
-    local commandsData = {}
+    local payloads = {}
 
     for _, command in pairs(self.commands) do
-        table.insert(commandsData, command.data)
+        table.insert(payloads, command.data)
     end
 
-    self.rest:registerCommands(commandsData)
-    print(("[COMMANDS] Registered %d command(s)"):format(#commandsData))
-end
-
-function CommandHandler:registerButton(customId, handler)
-    Utils.assertNonEmptyString(customId, "customId")
-    Utils.assertFunction(handler, "handler")
-
-    self.buttons[customId] = handler
-    print(("[BUTTON] Registered %s"):format(customId))
+    self.rest:registerCommands(payloads)
+    print(("[COMMANDS] Registered %d command(s)"):format(#payloads))
 end
 
 function CommandHandler:handleInteraction(interaction)
     Utils.assertTable(interaction, "interaction")
 
     if interaction.type == INTERACTION_APPLICATION_COMMAND then
-        self:handleSlashCommand(interaction)
+        self:handleCommand(interaction)
     elseif interaction.type == INTERACTION_MESSAGE_COMPONENT then
         self:handleComponent(interaction)
     end
 end
 
-function CommandHandler:handleSlashCommand(interaction)
+function CommandHandler:handleCommand(interaction)
     Utils.assertTable(interaction.data, "interaction.data")
 
-    local commandName = interaction.data.name
-    local command = self.commands[commandName]
+    local name = interaction.data.name
+    local command = self.commands[name]
 
     if not command then
-        warn(("[COMMAND] Missing handler for %s"):format(tostring(commandName)))
+        Runtime.warn(("[COMMAND] No handler for /%s"):format(tostring(name)))
         return
     end
 
-    local user = getInteractionUser(interaction)
-    print(("[COMMAND] %s from %s (%s)"):format(
-        tostring(commandName),
-        tostring(user and user.username),
-        tostring(user and user.id)
-    ))
-
-    local interactionObj = buildSlashCommandInteraction(self, interaction)
+    local wrappedInteraction = slashInteraction(self, interaction)
     local success, err = pcall(function()
-        command.execute(interactionObj)
+        command.execute(wrappedInteraction)
     end)
 
-    if not success then
-        replyWithCommandError(interactionObj, commandName, err)
+    if success then
+        return
     end
+
+    Runtime.warn(("[COMMAND] /%s failed: %s"):format(tostring(name), tostring(err)))
+
+    pcall(function()
+        wrappedInteraction.reply({
+            content = "Command failed.",
+            ephemeral = true
+        })
+    end)
 end
 
 function CommandHandler:handleComponent(interaction)
@@ -564,194 +747,32 @@ function CommandHandler:handleComponent(interaction)
     Utils.assertNonEmptyString(interaction.data.custom_id, "interaction.data.custom_id")
 
     local customId = interaction.data.custom_id
-    local handler = self.buttons[customId]
+    local execute = self.buttons[customId]
 
-    if not handler then
-        warn(("[BUTTON] Missing handler for %s"):format(customId))
+    if not execute then
+        Runtime.warn(("[BUTTON] No handler for %s"):format(customId))
         return
     end
 
-    local user = getInteractionUser(interaction)
-    print(("[BUTTON] %s from %s (%s)"):format(
-        customId,
-        tostring(user and user.username),
-        tostring(user and user.id)
-    ))
-
-    local interactionObj = buildComponentInteraction(self, interaction, customId)
     local success, err = pcall(function()
-        handler(interactionObj)
+        execute(componentInteraction(self, interaction))
     end)
 
     if not success then
-        warn(("[BUTTON ERROR] %s: %s"):format(customId, tostring(err)))
+        Runtime.warn(("[BUTTON] %s failed: %s"):format(customId, tostring(err)))
     end
 end
 
 return CommandHandler
-end function __BUNDLER_FILES__.b():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.b if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.b=v end return v.c end end do local function __modImpl()
-local Utils = __BUNDLER_FILES__.a()
-
-local Runtime = {}
-
-local function assertObject(value, name)
-    local valueType = type(value)
-
-    if valueType ~= "table" and valueType ~= "userdata" then
-        error(("%s must be a table or userdata, got %s"):format(name, valueType), 3)
-    end
-end
-
-local function hasMethod(value, methodName)
-    local valueType = type(value)
-
-    if valueType ~= "table" and valueType ~= "userdata" then
-        return false
-    end
-
-    local success, method = pcall(function()
-        return value[methodName]
-    end)
-
-    return success and type(method) == "function"
-end
-
-function Runtime.resolveRequest()
-    if type(request) == "function" then
-        return request
-    end
-
-    if type(http_request) == "function" then
-        return http_request
-    end
-
-    if syn and type(syn.request) == "function" then
-        return syn.request
-    end
-
-    if http and type(http.request) == "function" then
-        return http.request
-    end
-
-    error("No supported HTTP request function found. Expected request, http_request, syn.request, or http.request.", 2)
-end
-
-function Runtime.resolveWebSocketConnect()
-    if hasMethod(WebSocket, "connect") then
-        return WebSocket.connect
-    end
-
-    if hasMethod(Websocket, "connect") then
-        return Websocket.connect
-    end
-
-    if hasMethod(websocket, "connect") then
-        return websocket.connect
-    end
-
-    if syn and hasMethod(syn.websocket, "connect") then
-        return syn.websocket.connect
-    end
-
-    error("No supported websocket connector found. Expected WebSocket.connect, Websocket.connect, websocket.connect, or syn.websocket.connect.", 2)
-end
-
-function Runtime.connectEvent(target, eventName, callback)
-    assertObject(target, "target")
-    Utils.assertNonEmptyString(eventName, "eventName")
-    Utils.assertFunction(callback, "callback")
-
-    local event = nil
-    local readSuccess = pcall(function()
-        event = target[eventName]
-    end)
-
-    if readSuccess and event then
-        local connectMethod = nil
-        local connectSuccess = pcall(function()
-            connectMethod = event.Connect
-        end)
-
-        if connectSuccess and type(connectMethod) == "function" then
-            connectMethod(event, callback)
-            return
-        end
-    end
-
-    local success = pcall(function()
-        target[eventName] = callback
-    end)
-
-    if success then
-        return
-    end
-
-    error(("Event %s is not supported by this object"):format(eventName), 2)
-end
-
-function Runtime.sendWebSocket(socket, payload)
-    assertObject(socket, "socket")
-    Utils.assertNonEmptyString(payload, "payload")
-
-    local sendMethod = nil
-    local sendSuccess = pcall(function()
-        sendMethod = socket.Send
-    end)
-
-    if sendSuccess and type(sendMethod) == "function" then
-        sendMethod(socket, payload)
-        return
-    end
-
-    local lowerSendMethod = nil
-    local lowerSendSuccess = pcall(function()
-        lowerSendMethod = socket.send
-    end)
-
-    if lowerSendSuccess and type(lowerSendMethod) == "function" then
-        lowerSendMethod(socket, payload)
-        return
-    end
-
-    error("WebSocket send method not found. Expected Send or send.", 2)
-end
-
-function Runtime.closeWebSocket(socket)
-    assertObject(socket, "socket")
-
-    local closeMethod = nil
-    local closeSuccess = pcall(function()
-        closeMethod = socket.Close
-    end)
-
-    if closeSuccess and type(closeMethod) == "function" then
-        closeMethod(socket)
-        return
-    end
-
-    local lowerCloseMethod = nil
-    local lowerCloseSuccess = pcall(function()
-        lowerCloseMethod = socket.close
-    end)
-
-    if lowerCloseSuccess and type(lowerCloseMethod) == "function" then
-        lowerCloseMethod(socket)
-        return
-    end
-
-    error("WebSocket close method not found. Expected Close or close.", 2)
-end
-
-return Runtime
 end function __BUNDLER_FILES__.c():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.c if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.c=v end return v.c end end do local function __modImpl()
-local Runtime = __BUNDLER_FILES__.c()
+local Runtime = __BUNDLER_FILES__.b()
 local Utils = __BUNDLER_FILES__.a()
 
 local Gateway = {}
 Gateway.__index = Gateway
 
-local DISCORD_GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
-local DEFAULT_GATEWAY_INTENTS = 1
+local GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
+local DEFAULT_INTENTS = 1
 
 local OP_DISPATCH = 0
 local OP_HEARTBEAT = 1
@@ -762,15 +783,23 @@ local OP_INVALID_SESSION = 9
 local OP_HELLO = 10
 local OP_HEARTBEAT_ACK = 11
 
-local function logGateway(message)
+local FATAL_CLOSE_CODES = {
+    [4004] = true,
+    [4010] = true,
+    [4011] = true,
+    [4013] = true,
+    [4014] = true
+}
+
+local function log(message)
     print(("[GATEWAY] %s"):format(message))
 end
 
-local function warnGateway(message)
-    warn(("[GATEWAY] %s"):format(message))
+local function warnLog(message)
+    Runtime.warn(("[GATEWAY] %s"):format(message))
 end
 
-local function withGatewayQuery(url)
+local function gatewayUrl(url)
     Utils.assertNonEmptyString(url, "url")
 
     if string.find(url, "?", 1, true) then
@@ -778,6 +807,14 @@ local function withGatewayQuery(url)
     end
 
     return url .. "?v=10&encoding=json"
+end
+
+local function shouldReconnect(code)
+    if code == nil then
+        return true
+    end
+
+    return FATAL_CLOSE_CODES[code] ~= true
 end
 
 function Gateway.new(token, intents)
@@ -789,16 +826,18 @@ function Gateway.new(token, intents)
 
     local self = setmetatable({}, Gateway)
     self.token = token
-    self.intents = intents or DEFAULT_GATEWAY_INTENTS
+    self.intents = intents or DEFAULT_INTENTS
     self.ws = nil
+    self.state = "idle"
+    self.events = {}
     self.heartbeatInterval = nil
-    self.heartbeatTask = nil
+    self.heartbeatThread = nil
     self.lastSequence = nil
     self.lastHeartbeatAcked = true
     self.sessionId = nil
     self.resumeGatewayUrl = nil
-    self.shouldResume = false
-    self.events = {}
+    self.resumeOnHello = false
+    self.intentionalClose = false
     return self
 end
 
@@ -821,14 +860,21 @@ function Gateway:emit(eventName, ...)
         return
     end
 
+    local args = { ... }
+    local argCount = select("#", ...)
+
     for _, callback in ipairs(callbacks) do
-        task.spawn(callback, ...)
+        Runtime.spawn(function()
+            callback(table.unpack(args, 1, argCount))
+        end)
     end
 end
 
 function Gateway:send(op, data)
+    Utils.assertNumber(op, "op")
+
     if not self.ws then
-        error(("Cannot send gateway payload before websocket is connected: op=%s"):format(tostring(op)), 2)
+        error(("Cannot send Discord Gateway opcode %s before websocket is open."):format(tostring(op)), 2)
     end
 
     Runtime.sendWebSocket(self.ws, Utils.jsonEncode({
@@ -837,46 +883,9 @@ function Gateway:send(op, data)
     }))
 end
 
-function Gateway:heartbeat()
-    self.lastHeartbeatAcked = false
-    self:send(OP_HEARTBEAT, self.lastSequence)
-end
-
-function Gateway:stopHeartbeat()
-    if self.heartbeatTask then
-        task.cancel(self.heartbeatTask)
-        self.heartbeatTask = nil
-    end
-end
-
-function Gateway:startHeartbeat()
-    self:stopHeartbeat()
-
-    self.heartbeatTask = task.spawn(function()
-        wait((self.heartbeatInterval / 1000) * math.random())
-
-        if not self.ws or not self.heartbeatInterval then
-            return
-        end
-
-        self:heartbeat()
-
-        while self.ws and self.heartbeatInterval do
-            wait(self.heartbeatInterval / 1000)
-
-            if not self.lastHeartbeatAcked then
-                warnGateway("Heartbeat ACK missing")
-                self.heartbeatTask = nil
-                self:reconnect(true)
-                return
-            end
-
-            self:heartbeat()
-        end
-    end)
-end
-
 function Gateway:identify()
+    log("Sending Identify")
+
     self:send(OP_IDENTIFY, {
         token = self.token,
         intents = self.intents,
@@ -890,7 +899,8 @@ end
 
 function Gateway:resume()
     Utils.assertNonEmptyString(self.sessionId, "sessionId")
-    Utils.assertNonEmptyString(self.resumeGatewayUrl, "resumeGatewayUrl")
+
+    log("Sending Resume")
 
     self:send(OP_RESUME, {
         token = self.token,
@@ -899,39 +909,82 @@ function Gateway:resume()
     })
 end
 
-function Gateway:handleDispatch(eventName, eventData)
-    if eventName == "READY" then
-        self.sessionId = eventData.session_id
-        self.resumeGatewayUrl = eventData.resume_gateway_url
-        self.shouldResume = true
-    end
-
-    self:emit(eventName, eventData)
+function Gateway:heartbeat()
+    self.lastHeartbeatAcked = false
+    self:send(OP_HEARTBEAT, self.lastSequence)
 end
 
-function Gateway:handleMessage(message)
-    local payload = Utils.jsonDecode(message)
+function Gateway:stopHeartbeat()
+    Runtime.cancel(self.heartbeatThread)
+    self.heartbeatThread = nil
+end
 
-    if payload.s then
+function Gateway:startHeartbeat()
+    self:stopHeartbeat()
+
+    self.heartbeatThread = Runtime.spawn(function()
+        Runtime.wait((self.heartbeatInterval / 1000) * math.random())
+
+        while self.ws and self.heartbeatInterval do
+            if not self.lastHeartbeatAcked then
+                warnLog("Heartbeat ACK missing; reconnecting")
+                self:reconnect(true)
+                return
+            end
+
+            self:heartbeat()
+            Runtime.wait(self.heartbeatInterval / 1000)
+        end
+    end)
+end
+
+function Gateway:handleHello(data)
+    Utils.assertTable(data, "hello.d")
+    Utils.assertNumber(data.heartbeat_interval, "hello.d.heartbeat_interval")
+
+    self.heartbeatInterval = data.heartbeat_interval
+    self.lastHeartbeatAcked = true
+    log(("Hello received; heartbeat=%sms"):format(tostring(self.heartbeatInterval)))
+    self:startHeartbeat()
+
+    if self.resumeOnHello then
+        self:resume()
+        return
+    end
+
+    self:identify()
+end
+
+function Gateway:handleDispatch(eventName, data)
+    if eventName == "READY" then
+        self.state = "ready"
+        self.sessionId = data.session_id
+        self.resumeGatewayUrl = data.resume_gateway_url
+        log("READY received")
+    elseif eventName == "RESUMED" then
+        self.state = "ready"
+        log("RESUMED received")
+    end
+
+    self:emit(eventName, data)
+end
+
+function Gateway:handlePayload(payload)
+    Utils.assertTable(payload, "payload")
+    Utils.assertNumber(payload.op, "payload.op")
+
+    if payload.s ~= nil then
         self.lastSequence = payload.s
     end
 
-    logGateway(("Received op=%s event=%s sequence=%s"):format(
+    log(("op=%s event=%s seq=%s"):format(
         tostring(payload.op),
         tostring(payload.t),
         tostring(payload.s)
     ))
 
     if payload.op == OP_HELLO then
-        self.heartbeatInterval = payload.d.heartbeat_interval
-        logGateway("Hello received")
-        self:startHeartbeat()
-
-        if self.shouldResume then
-            self:resume()
-        else
-            self:identify()
-        end
+        self:handleHello(payload.d)
     elseif payload.op == OP_HEARTBEAT then
         self:heartbeat()
     elseif payload.op == OP_HEARTBEAT_ACK then
@@ -939,33 +992,34 @@ function Gateway:handleMessage(message)
     elseif payload.op == OP_DISPATCH then
         self:handleDispatch(payload.t, payload.d)
     elseif payload.op == OP_RECONNECT then
-        warnGateway("Reconnect requested")
-        self:emit("reconnect")
+        warnLog("Discord requested reconnect")
         self:reconnect(true)
     elseif payload.op == OP_INVALID_SESSION then
-        warnGateway("Invalid session")
-        wait(5)
+        warnLog(("Invalid session resumable=%s"):format(tostring(payload.d)))
+        Runtime.wait(5)
         self:reconnect(payload.d == true)
     end
 end
 
-function Gateway:handleClose(code, reason)
-    warnGateway(("Disconnected code=%s reason=%s"):format(tostring(code), tostring(reason)))
-    self:stopHeartbeat()
-    self.ws = nil
-    self.heartbeatInterval = nil
-    self.lastHeartbeatAcked = true
-    self:emit("disconnect", code, reason)
+function Gateway:handleMessage(message)
+    Utils.assertNonEmptyString(message, "message")
+
+    local payload = Utils.jsonDecode(message)
+    self:handlePayload(payload)
 end
 
-function Gateway:connectTo(url, shouldResume)
+function Gateway:connectSocket(url, resume)
     Utils.assertNonEmptyString(url, "url")
-    Utils.assertBoolean(shouldResume, "shouldResume")
-    logGateway("Connecting")
+    Utils.assertBoolean(resume, "resume")
 
-    local connectWebSocket = Runtime.resolveWebSocketConnect()
-    self.shouldResume = shouldResume
-    self.ws = connectWebSocket(withGatewayQuery(url))
+    local connect = Runtime.resolveWebSocketConnect()
+    self.state = "connecting"
+    self.resumeOnHello = resume
+    self.intentionalClose = false
+
+    log(("Connecting %s"):format(gatewayUrl(url)))
+    self.ws = connect(gatewayUrl(url))
+
     local socket = self.ws
 
     Runtime.connectEvent(socket, "OnMessage", function(message)
@@ -973,7 +1027,14 @@ function Gateway:connectTo(url, shouldResume)
             return
         end
 
-        self:handleMessage(message)
+        local success, err = pcall(function()
+            self:handleMessage(message)
+        end)
+
+        if not success then
+            warnLog(("Message handler failed: %s"):format(tostring(err)))
+            self:emit("error", err)
+        end
     end)
 
     Runtime.connectEvent(socket, "OnClose", function(code, reason)
@@ -984,10 +1045,10 @@ function Gateway:connectTo(url, shouldResume)
         self:handleClose(code, reason)
     end)
 
-    logGateway("Socket opened")
+    log("Socket opened")
 end
 
-function Gateway:closeSocket()
+function Gateway:closeCurrentSocket()
     if not self.ws then
         return
     end
@@ -995,53 +1056,100 @@ function Gateway:closeSocket()
     local socket = self.ws
     self.ws = nil
     self:stopHeartbeat()
-    Runtime.closeWebSocket(socket)
+
+    local success, err = pcall(function()
+        Runtime.closeWebSocket(socket)
+    end)
+
+    if not success then
+        warnLog(("Socket close failed: %s"):format(tostring(err)))
+    end
 end
 
-function Gateway:reconnect(shouldResume)
-    Utils.assertBoolean(shouldResume, "shouldResume")
-    self:closeSocket()
+function Gateway:reconnect(resume)
+    Utils.assertBoolean(resume, "resume")
+
+    self.state = "reconnecting"
+    self:emit("reconnect")
+    self:closeCurrentSocket()
     self.heartbeatInterval = nil
     self.lastHeartbeatAcked = true
 
-    if shouldResume and self.resumeGatewayUrl and self.sessionId then
-        self:connectTo(self.resumeGatewayUrl, true)
+    if resume and self.sessionId and self.resumeGatewayUrl then
+        self:connectSocket(self.resumeGatewayUrl, true)
         return
     end
 
     self.sessionId = nil
     self.resumeGatewayUrl = nil
     self.lastSequence = nil
-    self:connectTo(DISCORD_GATEWAY_URL, false)
+    self:connectSocket(GATEWAY_URL, false)
+end
+
+function Gateway:handleClose(code, reason)
+    warnLog(("Disconnected code=%s reason=%s"):format(tostring(code), tostring(reason)))
+    self:stopHeartbeat()
+    self.ws = nil
+    self.heartbeatInterval = nil
+    self.lastHeartbeatAcked = true
+    self.state = "disconnected"
+    self:emit("disconnect", code, reason)
+
+    if self.intentionalClose or not shouldReconnect(code) then
+        return
+    end
+
+    Runtime.spawn(function()
+        Runtime.wait(5)
+        self:reconnect(self.sessionId ~= nil)
+    end)
 end
 
 function Gateway:connect()
     if self.ws then
-        error("Gateway is already connected. Do not call client:login() more than once for the same client.", 2)
+        error("Gateway is already connected. Create another Client or call close before login again.", 2)
     end
 
-    self:connectTo(DISCORD_GATEWAY_URL, false)
+    self:connectSocket(GATEWAY_URL, false)
+end
+
+function Gateway:close()
+    self.intentionalClose = true
+    self.state = "closed"
+    self:closeCurrentSocket()
 end
 
 return Gateway
 end function __BUNDLER_FILES__.d():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.d if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.d=v end return v.c end end do local function __modImpl()
-local Runtime = __BUNDLER_FILES__.c()
+local Runtime = __BUNDLER_FILES__.b()
 local Utils = __BUNDLER_FILES__.a()
 
 local Rest = {}
 Rest.__index = Rest
 
-local DEFAULT_BASE_URL = "https://discord.com/api/v10"
+local API_URL = "https://discord.com/api/v10"
 
-local function decodeResponseBody(body)
-    if not body or body == "" then
+local function encodeBody(body)
+    if body == nil then
+        return nil
+    end
+
+    return Utils.jsonEncode(body)
+end
+
+local function decodeBody(body)
+    if body == nil or body == "" then
         return nil
     end
 
     return Utils.jsonDecode(body)
 end
 
-local function shouldRetry(response, requestError)
+local function isSuccess(response)
+    return response and response.StatusCode >= 200 and response.StatusCode < 300
+end
+
+local function isRetryable(response, requestError)
     if requestError then
         return true
     end
@@ -1053,16 +1161,16 @@ local function shouldRetry(response, requestError)
     return response.StatusCode == 429 or response.StatusCode >= 500
 end
 
-local function formatRestError(method, endpoint, response, requestError)
+local function restError(method, endpoint, response, requestError)
     if requestError then
-        return ("Discord REST request failed: method=%s endpoint=%s error=%s"):format(
+        return ("Discord REST failed: method=%s endpoint=%s requestError=%s"):format(
             method,
             endpoint,
             tostring(requestError)
         )
     end
 
-    return ("Discord REST request failed: method=%s endpoint=%s status=%s body=%s"):format(
+    return ("Discord REST failed: method=%s endpoint=%s status=%s body=%s"):format(
         method,
         endpoint,
         tostring(response and response.StatusCode),
@@ -1077,9 +1185,8 @@ function Rest.new(token, applicationId)
     local self = setmetatable({}, Rest)
     self.token = token
     self.applicationId = applicationId
-    self.baseUrl = DEFAULT_BASE_URL
-    self.maxRetries = 3
     self.request = Runtime.resolveRequest()
+    self.maxRetries = 3
     return self
 end
 
@@ -1091,10 +1198,10 @@ function Rest:requestJson(method, endpoint, body)
     local lastError = nil
 
     for attempt = 1, self.maxRetries do
-        local requestBody = body and Utils.jsonEncode(body) or nil
+        local requestBody = encodeBody(body)
         local success, response = pcall(function()
             return self.request({
-                Url = self.baseUrl .. endpoint,
+                Url = API_URL .. endpoint,
                 Method = method,
                 Headers = {
                     ["Authorization"] = "Bot " .. self.token,
@@ -1104,69 +1211,73 @@ function Rest:requestJson(method, endpoint, body)
             })
         end)
 
-        if success and response and response.StatusCode >= 200 and response.StatusCode < 300 then
-            return decodeResponseBody(response.Body)
+        if success and isSuccess(response) then
+            return decodeBody(response.Body)
         end
 
-        lastResponse = response
-        lastError = nil
-
-        if not success then
+        if success then
+            lastResponse = response
+            lastError = nil
+        else
             lastResponse = nil
             lastError = response
         end
 
-        if attempt == self.maxRetries or not shouldRetry(lastResponse, lastError) then
-            error(formatRestError(method, endpoint, lastResponse, lastError), 2)
+        if attempt == self.maxRetries or not isRetryable(lastResponse, lastError) then
+            error(restError(method, endpoint, lastResponse, lastError), 2)
         end
 
-        warn("[REST] Retrying request", {
+        Runtime.warn("[REST] retry", {
             method = method,
             endpoint = endpoint,
             attempt = attempt,
-            maxRetries = self.maxRetries,
             statusCode = lastResponse and lastResponse.StatusCode or nil,
             error = lastError and tostring(lastError) or nil
         })
 
-        wait(attempt)
+        Runtime.wait(attempt)
     end
 
-    error(formatRestError(method, endpoint, lastResponse, lastError), 2)
+    error(restError(method, endpoint, lastResponse, lastError), 2)
 end
 
-function Rest:sendMessage(channelId, content, options)
+function Rest:registerCommands(commands)
+    Utils.assertTable(commands, "commands")
+    return self:requestJson("PUT", "/applications/" .. self.applicationId .. "/commands", commands)
+end
+
+function Rest:sendMessage(channelId, options, extraOptions)
     Utils.assertNonEmptyString(channelId, "channelId")
 
-    if content ~= nil then
-        Utils.assertNonEmptyString(content, "content")
+    local messageOptions = options
+
+    if extraOptions ~= nil then
+        Utils.assertTable(extraOptions, "extraOptions")
+        messageOptions = Utils.deepCopy(extraOptions)
+        messageOptions.content = options
     end
 
-    local messageOptions = options and Utils.toJSONValue(options, "options") or {}
-    Utils.assertTable(messageOptions, "options")
-
-    if content == nil and messageOptions.embeds == nil and messageOptions.components == nil then
-        error("content, options.embeds, or options.components is required", 2)
-    end
+    local message = Utils.normalizeMessageOptions(messageOptions)
 
     return self:requestJson("POST", "/channels/" .. channelId .. "/messages", {
-        content = content,
-        embeds = messageOptions.embeds,
-        components = messageOptions.components,
-        flags = messageOptions.flags,
-        message_reference = messageOptions.reply and { message_id = messageOptions.reply } or nil
+        content = message.content,
+        embeds = message.embeds,
+        components = message.components,
+        flags = Utils.resolveMessageFlags(message.flags, message.ephemeral)
     })
 end
 
-function Rest:editMessage(channelId, messageId, content, embeds, components, flags)
+function Rest:editMessage(channelId, messageId, options)
     Utils.assertNonEmptyString(channelId, "channelId")
     Utils.assertNonEmptyString(messageId, "messageId")
 
+    local message = Utils.normalizeEditOptions(options)
+
     return self:requestJson("PATCH", "/channels/" .. channelId .. "/messages/" .. messageId, {
-        content = content,
-        embeds = embeds,
-        components = components,
-        flags = flags
+        content = message.content,
+        embeds = message.embeds,
+        components = message.components,
+        flags = message.flags
     })
 end
 
@@ -1185,23 +1296,19 @@ function Rest:createReaction(channelId, messageId, emoji)
     return self:requestJson("PUT", "/channels/" .. channelId .. "/messages/" .. messageId .. "/reactions/" .. emoji .. "/@me")
 end
 
-function Rest:registerCommands(commands)
-    Utils.assertTable(commands, "commands")
-
-    return self:requestJson("PUT", "/applications/" .. self.applicationId .. "/commands", commands)
-end
-
-function Rest:replyInteraction(interactionId, interactionToken, content, ephemeral, embeds, components, flags)
+function Rest:replyInteraction(interactionId, interactionToken, options)
     Utils.assertNonEmptyString(interactionId, "interactionId")
     Utils.assertNonEmptyString(interactionToken, "interactionToken")
+
+    local message = Utils.normalizeMessageOptions(options)
 
     return self:requestJson("POST", "/interactions/" .. interactionId .. "/" .. interactionToken .. "/callback", {
         type = 4,
         data = {
-            content = content,
-            embeds = embeds,
-            components = components,
-            flags = Utils.resolveMessageFlags(flags, ephemeral)
+            content = message.content,
+            embeds = message.embeds,
+            components = message.components,
+            flags = Utils.resolveMessageFlags(message.flags, message.ephemeral)
         }
     })
 end
@@ -1209,6 +1316,7 @@ end
 function Rest:deferReply(interactionId, interactionToken, ephemeral)
     Utils.assertNonEmptyString(interactionId, "interactionId")
     Utils.assertNonEmptyString(interactionToken, "interactionToken")
+    Utils.assertBoolean(ephemeral, "ephemeral")
 
     return self:requestJson("POST", "/interactions/" .. interactionId .. "/" .. interactionToken .. "/callback", {
         type = 5,
@@ -1218,28 +1326,32 @@ function Rest:deferReply(interactionId, interactionToken, ephemeral)
     })
 end
 
-function Rest:editInteractionResponse(interactionToken, content, embeds, components, flags)
+function Rest:editInteractionResponse(interactionToken, options)
     Utils.assertNonEmptyString(interactionToken, "interactionToken")
 
+    local message = Utils.normalizeEditOptions(options)
+
     return self:requestJson("PATCH", "/webhooks/" .. self.applicationId .. "/" .. interactionToken .. "/messages/@original", {
-        content = content,
-        embeds = embeds,
-        components = components,
-        flags = flags
+        content = message.content,
+        embeds = message.embeds,
+        components = message.components,
+        flags = message.flags
     })
 end
 
-function Rest:updateComponent(interactionId, interactionToken, content, embeds, components, flags)
+function Rest:updateInteraction(interactionId, interactionToken, options)
     Utils.assertNonEmptyString(interactionId, "interactionId")
     Utils.assertNonEmptyString(interactionToken, "interactionToken")
+
+    local message = Utils.normalizeEditOptions(options)
 
     return self:requestJson("POST", "/interactions/" .. interactionId .. "/" .. interactionToken .. "/callback", {
         type = 7,
         data = {
-            content = content,
-            embeds = embeds,
-            components = components,
-            flags = flags
+            content = message.content,
+            embeds = message.embeds,
+            components = message.components,
+            flags = message.flags
         }
     })
 end
@@ -1255,13 +1367,26 @@ end
 
 return Rest
 end function __BUNDLER_FILES__.e():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.e if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.e=v end return v.c end end do local function __modImpl()
-local CommandHandler = __BUNDLER_FILES__.b()
+local CommandHandler = __BUNDLER_FILES__.c()
 local Gateway = __BUNDLER_FILES__.d()
 local Rest = __BUNDLER_FILES__.e()
+local Runtime = __BUNDLER_FILES__.b()
 local Utils = __BUNDLER_FILES__.a()
 
 local Client = {}
 Client.__index = Client
+
+local function getUserTag(user)
+    if not user then
+        return "unknown"
+    end
+
+    if user.discriminator and user.discriminator ~= "0" then
+        return ("%s#%s"):format(tostring(user.username), tostring(user.discriminator))
+    end
+
+    return tostring(user.username)
+end
 
 function Client.new(options)
     Utils.assertTable(options, "options")
@@ -1277,25 +1402,27 @@ function Client.new(options)
     self.applicationId = options.applicationId
     self.intents = options.intents
     self.user = nil
+    self.ready = false
     self.events = {}
-
-    self.gateway = Gateway.new(self.token, self.intents)
-    self.rest = Rest.new(self.token, self.applicationId)
+    self.rest = Rest.new(options.token, options.applicationId)
     self.commands = CommandHandler.new(self.rest)
+    self.gateway = Gateway.new(options.token, options.intents)
 
     self.gateway:on("READY", function(data)
+        self.ready = true
         self.user = data.user
-        print(("[READY] Logged in as %s (%s)"):format(
-            tostring(data.user and data.user.username),
-            tostring(data.user and data.user.id)
-        ))
-
+        print(("[CLIENT] Ready as %s (%s)"):format(getUserTag(self.user), tostring(self.user and self.user.id)))
         self:emit("ready", data)
 
-        task.spawn(function()
-            wait(2)
+        Runtime.spawn(function()
+            Runtime.wait(2)
             self.commands:registerAll()
         end)
+    end)
+
+    self.gateway:on("RESUMED", function(data)
+        self.ready = true
+        self:emit("resumed", data)
     end)
 
     self.gateway:on("INTERACTION_CREATE", function(data)
@@ -1312,11 +1439,17 @@ function Client.new(options)
     end)
 
     self.gateway:on("disconnect", function(code, reason)
+        self.ready = false
         self:emit("disconnect", code, reason)
     end)
 
     self.gateway:on("reconnect", function()
+        self.ready = false
         self:emit("reconnect")
+    end)
+
+    self.gateway:on("error", function(err)
+        self:emit("error", err)
     end)
 
     return self
@@ -1331,6 +1464,7 @@ function Client:on(eventName, callback)
     end
 
     table.insert(self.events[eventName], callback)
+    return self
 end
 
 function Client:emit(eventName, ...)
@@ -1341,13 +1475,24 @@ function Client:emit(eventName, ...)
         return
     end
 
+    local args = { ... }
+    local argCount = select("#", ...)
+
     for _, callback in ipairs(callbacks) do
-        task.spawn(callback, ...)
+        Runtime.spawn(function()
+            callback(table.unpack(args, 1, argCount))
+        end)
     end
 end
 
 function Client:login()
     self.gateway:connect()
+    return self
+end
+
+function Client:destroy()
+    self.gateway:close()
+    self.ready = false
 end
 
 return Client
@@ -2273,7 +2418,7 @@ end function __BUNDLER_FILES__.g():typeof(__modImpl())local v=__BUNDLER_FILES__.
 local Client = __BUNDLER_FILES__.f()
 local Utils = __BUNDLER_FILES__.a()
 local Builders = __BUNDLER_FILES__.g()
-local Runtime = __BUNDLER_FILES__.c()
+local Runtime = __BUNDLER_FILES__.b()
 
 return {
     Builders = Builders,
