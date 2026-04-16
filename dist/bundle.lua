@@ -1,9 +1,101 @@
-local __BUNDLER_FILES__={cache={}::any}do do local function __modImpl()
+local __BUNDLER_FILES__={cache={}::any}do do local function __modImpl()local Constants = {}
+
+Constants.Discord = {
+    ApiUrl = "https://discord.com/api/v10",
+    GatewayUrl = "wss://gateway.discord.gg/?v=10&encoding=json",
+    DefaultIntents = 1
+}
+
+Constants.Opcode = {
+    Dispatch = 0,
+    Heartbeat = 1,
+    Identify = 2,
+    Resume = 6,
+    Reconnect = 7,
+    InvalidSession = 9,
+    Hello = 10,
+    HeartbeatAck = 11
+}
+
+Constants.InteractionType = {
+    ApplicationCommand = 2,
+    MessageComponent = 3
+}
+
+Constants.InteractionResponseType = {
+    ChannelMessageWithSource = 4,
+    DeferredChannelMessageWithSource = 5,
+    DeferredUpdateMessage = 6,
+    UpdateMessage = 7
+}
+
+Constants.ApplicationCommandType = {
+    ChatInput = 1
+}
+
+Constants.OptionType = {
+    String = 3,
+    Integer = 4,
+    Boolean = 5,
+    User = 6,
+    Channel = 7,
+    Role = 8,
+    Mentionable = 9,
+    Number = 10,
+    Attachment = 11
+}
+
+Constants.ComponentType = {
+    ActionRow = 1,
+    Button = 2,
+    StringSelect = 3,
+    TextInput = 4,
+    UserSelect = 5,
+    RoleSelect = 6,
+    MentionableSelect = 7,
+    ChannelSelect = 8,
+    Section = 9,
+    TextDisplay = 10,
+    Thumbnail = 11,
+    MediaGallery = 12,
+    File = 13,
+    Separator = 14,
+    Container = 17
+}
+
+Constants.ButtonStyle = {
+    Primary = 1,
+    Secondary = 2,
+    Success = 3,
+    Danger = 4,
+    Link = 5
+}
+
+Constants.SeparatorSpacing = {
+    Small = 1,
+    Large = 2
+}
+
+Constants.MessageFlags = {
+    Ephemeral = 64,
+    IsComponentsV2 = 32768
+}
+
+Constants.CloseCode = {
+    AuthenticationFailed = 4004,
+    InvalidShard = 4010,
+    ShardingRequired = 4011,
+    InvalidIntents = 4013,
+    DisallowedIntents = 4014
+}
+
+return Constants
+end function __BUNDLER_FILES__.a():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.a if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.a=v end return v.c end end do local function __modImpl()
+
+
+local Constants = __BUNDLER_FILES__.a()
 
 local Utils = {}
-
-local EPHEMERAL_MESSAGE_FLAG = 64
-local IS_COMPONENTS_V2_MESSAGE_FLAG = 32768
 
 local function getEnvironment()
     local success, environment = pcall(function()
@@ -22,7 +114,7 @@ local function getHttpService()
     local gameInstance = environment.game
 
     if not gameInstance or not gameInstance.GetService then
-        error("HttpService is unavailable: global game:GetService is missing", 3)
+        error("HttpService is unavailable. This library must run in a Roblox/executor environment.", 3)
     end
 
     return gameInstance:GetService("HttpService")
@@ -50,8 +142,12 @@ function Utils.assertBoolean(value, name)
     Utils.assertType(value, "boolean", name)
 end
 
-function Utils.assertNonEmptyString(value, name)
+function Utils.assertString(value, name)
     Utils.assertType(value, "string", name)
+end
+
+function Utils.assertNonEmptyString(value, name)
+    Utils.assertString(value, name)
 
     if value == "" then
         error(("%s must not be empty"):format(name), 3)
@@ -73,6 +169,8 @@ function Utils.deepCopy(value)
 end
 
 function Utils.arrayCopy(values)
+    Utils.assertTable(values, "values")
+
     local result = {}
 
     for index, value in ipairs(values) do
@@ -88,7 +186,7 @@ function Utils.jsonEncode(data)
     end)
 
     if not success then
-        error(("Failed to encode JSON: %s"):format(tostring(result)), 2)
+        error(("JSON encode failed: %s"):format(tostring(result)), 2)
     end
 
     return result
@@ -102,10 +200,19 @@ function Utils.jsonDecode(value)
     end)
 
     if not success then
-        error(("Failed to decode JSON: %s"):format(tostring(result)), 2)
+        error(("JSON decode failed: %s"):format(tostring(result)), 2)
     end
 
     return result
+end
+
+function Utils.toJSONValue(value, name)
+    if type(value) == "table" and value.toJSON ~= nil then
+        Utils.assertFunction(value.toJSON, name .. ".toJSON")
+        return value:toJSON()
+    end
+
+    return value
 end
 
 function Utils.hasFlag(flags, flag)
@@ -131,7 +238,7 @@ function Utils.resolveMessageFlags(flags, ephemeral)
     Utils.assertNumber(resolvedFlags, "flags")
 
     if ephemeral then
-        resolvedFlags = Utils.addFlag(resolvedFlags, EPHEMERAL_MESSAGE_FLAG)
+        resolvedFlags = Utils.addFlag(resolvedFlags, Constants.MessageFlags.Ephemeral)
     end
 
     if resolvedFlags == 0 then
@@ -141,45 +248,35 @@ function Utils.resolveMessageFlags(flags, ephemeral)
     return resolvedFlags
 end
 
-function Utils.toJSONValue(value, name)
-    if type(value) == "table" and value.toJSON then
-        Utils.assertFunction(value.toJSON, name .. ".toJSON")
-        return value:toJSON()
-    end
-
-    return value
-end
-
 function Utils.normalizeMessageOptions(options)
     if type(options) == "string" then
         return {
             content = options,
-            ephemeral = false,
             embeds = nil,
             components = nil,
+            ephemeral = false,
             flags = nil
         }
     end
 
-    Utils.assertTable(options, "options")
     local data = Utils.toJSONValue(options, "options")
     Utils.assertTable(data, "options")
 
-    if data.content or data.embeds or data.components or data.ephemeral ~= nil or data.flags ~= nil then
+    if data.content or data.embeds or data.components or data.flags ~= nil or data.ephemeral ~= nil then
         return {
             content = data.content,
-            ephemeral = data.ephemeral == true,
             embeds = data.embeds,
             components = data.components,
+            ephemeral = data.ephemeral == true,
             flags = data.flags
         }
     end
 
     return {
         content = nil,
-        ephemeral = false,
         embeds = { data },
         components = nil,
+        ephemeral = false,
         flags = nil
     }
 end
@@ -194,7 +291,6 @@ function Utils.normalizeEditOptions(options)
         }
     end
 
-    Utils.assertTable(options, "options")
     local data = Utils.toJSONValue(options, "options")
     Utils.assertTable(data, "options")
 
@@ -215,95 +311,548 @@ function Utils.normalizeEditOptions(options)
     }
 end
 
-function Utils.makeEmbed(options)
-    Utils.assertTable(options, "options")
-
-    return {
-        title = options.title,
-        description = options.description,
-        color = options.color or Utils.Colors.Blurple,
-        fields = options.fields or {},
-        thumbnail = options.thumbnail,
-        image = options.image,
-        footer = options.footer,
-        author = options.author,
-        timestamp = options.timestamp or os.date("!%Y-%m-%dT%H:%M:%S"),
-        url = options.url
-    }
-end
-
-function Utils.makeButton(options)
-    Utils.assertTable(options, "options")
-
-    local button = {
-        type = 2,
-        style = options.style or Utils.ButtonStyle.Primary,
-        label = options.label,
-        custom_id = options.customId,
-        emoji = options.emoji,
-        url = options.url,
-        disabled = options.disabled or false
-    }
-
-    if button.url then
-        button.custom_id = nil
-        button.style = Utils.ButtonStyle.Link
-    end
-
-    return button
-end
-
-function Utils.makeActionRow(components)
-    Utils.assertTable(components, "components")
-
-    return {
-        type = 1,
-        components = components
-    }
-end
-
-function Utils.snowflakeToTimestamp(snowflake)
-    local numericSnowflake = tonumber(snowflake)
-
-    if not numericSnowflake then
-        error(("snowflake must be numeric, got %s"):format(tostring(snowflake)), 2)
-    end
-
-    return math.floor(numericSnowflake / 4194304 + 1420070400000) / 1000
-end
-
-Utils.ButtonStyle = {
-    Primary = 1,
-    Secondary = 2,
-    Success = 3,
-    Danger = 4,
-    Link = 5
-}
-
 Utils.Colors = {
     Blurple = 0x5865F2,
     Green = 0x57F287,
     Yellow = 0xFEE75C,
-    Fuchsia = 0xEB459E,
     Red = 0xED4245,
     White = 0xFFFFFF,
-    Black = 0x000000,
-    Orange = 0xFF8C00,
-    Purple = 0x9B59B6,
-    Pink = 0xFF69B4,
-    Gold = 0xFFD700
+    Black = 0x000000
 }
 
-Utils.MessageFlags = {
-    Ephemeral = EPHEMERAL_MESSAGE_FLAG,
-    IsComponentsV2 = IS_COMPONENTS_V2_MESSAGE_FLAG
-}
+Utils.ButtonStyle = Constants.ButtonStyle
+Utils.MessageFlags = Constants.MessageFlags
 
 return Utils
-end function __BUNDLER_FILES__.a():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.a if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.a=v end return v.c end end do local function __modImpl()
+end function __BUNDLER_FILES__.b():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.b if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.b=v end return v.c end end do local function __modImpl()
+local Constants = __BUNDLER_FILES__.a()
+local Utils = __BUNDLER_FILES__.b()
+
+local Builders = {}
+
+local function copyMap(value)
+    local result = {}
+
+    for key, item in pairs(value) do
+        result[key] = Utils.deepCopy(item)
+    end
+
+    return result
+end
+
+local function setField(builder, key, value)
+    local data = copyMap(builder.data)
+    data[key] = value
+    return setmetatable({ data = data }, getmetatable(builder))
+end
+
+local function getJSON(value, name)
+    Utils.assertTable(value, name)
+    Utils.assertFunction(value.toJSON, name .. ".toJSON")
+    return value:toJSON()
+end
+
+local SlashCommandOptionBuilder = {}
+SlashCommandOptionBuilder.__index = SlashCommandOptionBuilder
+
+function SlashCommandOptionBuilder.new(optionType)
+    Utils.assertNumber(optionType, "optionType")
+    return setmetatable({ data = { type = optionType } }, SlashCommandOptionBuilder)
+end
+
+function SlashCommandOptionBuilder:setName(name)
+    Utils.assertNonEmptyString(name, "name")
+    return setField(self, "name", name)
+end
+
+function SlashCommandOptionBuilder:setDescription(description)
+    Utils.assertNonEmptyString(description, "description")
+    return setField(self, "description", description)
+end
+
+function SlashCommandOptionBuilder:setRequired(required)
+    Utils.assertBoolean(required, "required")
+    return setField(self, "required", required)
+end
+
+function SlashCommandOptionBuilder:addChoice(name, value)
+    Utils.assertNonEmptyString(name, "name")
+
+    local data = copyMap(self.data)
+    local choices = data.choices or {}
+    table.insert(choices, {
+        name = name,
+        value = value
+    })
+    data.choices = choices
+
+    return setmetatable({ data = data }, SlashCommandOptionBuilder)
+end
+
+function SlashCommandOptionBuilder:toJSON()
+    Utils.assertNonEmptyString(self.data.name, "option.name")
+    Utils.assertNonEmptyString(self.data.description, "option.description")
+    return copyMap(self.data)
+end
+
+local SlashCommandBuilder = {}
+SlashCommandBuilder.__index = SlashCommandBuilder
+
+function SlashCommandBuilder.new()
+    return setmetatable({
+        data = {
+            type = Constants.ApplicationCommandType.ChatInput,
+            options = {}
+        }
+    }, SlashCommandBuilder)
+end
+
+function SlashCommandBuilder:setName(name)
+    Utils.assertNonEmptyString(name, "name")
+    return setField(self, "name", name)
+end
+
+function SlashCommandBuilder:setDescription(description)
+    Utils.assertNonEmptyString(description, "description")
+    return setField(self, "description", description)
+end
+
+function SlashCommandBuilder:addOption(optionType, configure)
+    Utils.assertNumber(optionType, "optionType")
+    Utils.assertFunction(configure, "configure")
+
+    local option = configure(SlashCommandOptionBuilder.new(optionType))
+    local data = copyMap(self.data)
+    local options = data.options or {}
+    table.insert(options, getJSON(option, "option"))
+    data.options = options
+
+    return setmetatable({ data = data }, SlashCommandBuilder)
+end
+
+function SlashCommandBuilder:addStringOption(configure)
+    return self:addOption(Constants.OptionType.String, configure)
+end
+
+function SlashCommandBuilder:addIntegerOption(configure)
+    return self:addOption(Constants.OptionType.Integer, configure)
+end
+
+function SlashCommandBuilder:addBooleanOption(configure)
+    return self:addOption(Constants.OptionType.Boolean, configure)
+end
+
+function SlashCommandBuilder:addUserOption(configure)
+    return self:addOption(Constants.OptionType.User, configure)
+end
+
+function SlashCommandBuilder:toJSON()
+    Utils.assertNonEmptyString(self.data.name, "command.name")
+    Utils.assertNonEmptyString(self.data.description, "command.description")
+
+    local data = copyMap(self.data)
+    if data.options and #data.options == 0 then
+        data.options = nil
+    end
+
+    return data
+end
+
+local EmbedBuilder = {}
+EmbedBuilder.__index = EmbedBuilder
+
+function EmbedBuilder.new()
+    return setmetatable({
+        data = {
+            fields = {}
+        }
+    }, EmbedBuilder)
+end
+
+function EmbedBuilder:setTitle(title)
+    Utils.assertNonEmptyString(title, "title")
+    return setField(self, "title", title)
+end
+
+function EmbedBuilder:setDescription(description)
+    Utils.assertNonEmptyString(description, "description")
+    return setField(self, "description", description)
+end
+
+function EmbedBuilder:setColor(color)
+    Utils.assertNumber(color, "color")
+    return setField(self, "color", color)
+end
+
+function EmbedBuilder:setURL(url)
+    Utils.assertNonEmptyString(url, "url")
+    return setField(self, "url", url)
+end
+
+function EmbedBuilder:setThumbnail(url)
+    Utils.assertNonEmptyString(url, "url")
+    return setField(self, "thumbnail", { url = url })
+end
+
+function EmbedBuilder:setImage(url)
+    Utils.assertNonEmptyString(url, "url")
+    return setField(self, "image", { url = url })
+end
+
+function EmbedBuilder:addField(name, value, inline)
+    Utils.assertNonEmptyString(name, "name")
+    Utils.assertNonEmptyString(value, "value")
+
+    if inline ~= nil then
+        Utils.assertBoolean(inline, "inline")
+    end
+
+    local data = copyMap(self.data)
+    local fields = data.fields or {}
+    table.insert(fields, {
+        name = name,
+        value = value,
+        inline = inline == true
+    })
+    data.fields = fields
+
+    return setmetatable({ data = data }, EmbedBuilder)
+end
+
+function EmbedBuilder:toJSON()
+    local data = copyMap(self.data)
+
+    if data.fields and #data.fields == 0 then
+        data.fields = nil
+    end
+
+    return data
+end
+
+local ButtonBuilder = {}
+ButtonBuilder.__index = ButtonBuilder
+
+function ButtonBuilder.new()
+    return setmetatable({
+        data = {
+            type = Constants.ComponentType.Button
+        }
+    }, ButtonBuilder)
+end
+
+function ButtonBuilder:setCustomId(customId)
+    Utils.assertNonEmptyString(customId, "customId")
+    local data = copyMap(self.data)
+    data.custom_id = customId
+    data.url = nil
+    return setmetatable({ data = data }, ButtonBuilder)
+end
+
+function ButtonBuilder:setLabel(label)
+    Utils.assertNonEmptyString(label, "label")
+    return setField(self, "label", label)
+end
+
+function ButtonBuilder:setStyle(style)
+    Utils.assertNumber(style, "style")
+    return setField(self, "style", style)
+end
+
+function ButtonBuilder:setURL(url)
+    Utils.assertNonEmptyString(url, "url")
+    local data = copyMap(self.data)
+    data.url = url
+    data.custom_id = nil
+    data.style = Constants.ButtonStyle.Link
+    return setmetatable({ data = data }, ButtonBuilder)
+end
+
+function ButtonBuilder:setDisabled(disabled)
+    Utils.assertBoolean(disabled, "disabled")
+    return setField(self, "disabled", disabled)
+end
+
+function ButtonBuilder:toJSON()
+    local data = copyMap(self.data)
+    data.style = data.style or Constants.ButtonStyle.Primary
+
+    if data.style == Constants.ButtonStyle.Link then
+        Utils.assertNonEmptyString(data.url, "button.url")
+        data.custom_id = nil
+    else
+        Utils.assertNonEmptyString(data.custom_id, "button.custom_id")
+    end
+
+    return data
+end
+
+local ActionRowBuilder = {}
+ActionRowBuilder.__index = ActionRowBuilder
+
+function ActionRowBuilder.new()
+    return setmetatable({
+        data = {
+            type = Constants.ComponentType.ActionRow,
+            components = {}
+        }
+    }, ActionRowBuilder)
+end
+
+function ActionRowBuilder:addComponent(component)
+    local componentData = getJSON(component, "component")
+
+    if componentData.type ~= Constants.ComponentType.Button then
+        error("ActionRowBuilder currently supports button components only", 2)
+    end
+
+    local data = copyMap(self.data)
+    local components = data.components or {}
+
+    if #components >= 5 then
+        error("action row cannot contain more than five buttons", 2)
+    end
+
+    table.insert(components, componentData)
+    data.components = components
+
+    return setmetatable({ data = data }, ActionRowBuilder)
+end
+
+function ActionRowBuilder:toJSON()
+    if #self.data.components == 0 then
+        error("action row must contain at least one component", 2)
+    end
+
+    return copyMap(self.data)
+end
+
+local TextDisplayBuilder = {}
+TextDisplayBuilder.__index = TextDisplayBuilder
+
+function TextDisplayBuilder.new()
+    return setmetatable({
+        data = {
+            type = Constants.ComponentType.TextDisplay
+        }
+    }, TextDisplayBuilder)
+end
+
+function TextDisplayBuilder:setContent(content)
+    Utils.assertNonEmptyString(content, "content")
+    return setField(self, "content", content)
+end
+
+function TextDisplayBuilder:toJSON()
+    Utils.assertNonEmptyString(self.data.content, "textDisplay.content")
+    return copyMap(self.data)
+end
+
+local ThumbnailBuilder = {}
+ThumbnailBuilder.__index = ThumbnailBuilder
+
+function ThumbnailBuilder.new()
+    return setmetatable({
+        data = {
+            type = Constants.ComponentType.Thumbnail
+        }
+    }, ThumbnailBuilder)
+end
+
+function ThumbnailBuilder:setURL(url)
+    Utils.assertNonEmptyString(url, "url")
+    return setField(self, "media", { url = url })
+end
+
+function ThumbnailBuilder:setDescription(description)
+    Utils.assertNonEmptyString(description, "description")
+    return setField(self, "description", description)
+end
+
+function ThumbnailBuilder:toJSON()
+    Utils.assertTable(self.data.media, "thumbnail.media")
+    Utils.assertNonEmptyString(self.data.media.url, "thumbnail.media.url")
+    return copyMap(self.data)
+end
+
+local SeparatorBuilder = {}
+SeparatorBuilder.__index = SeparatorBuilder
+
+function SeparatorBuilder.new()
+    return setmetatable({
+        data = {
+            type = Constants.ComponentType.Separator
+        }
+    }, SeparatorBuilder)
+end
+
+function SeparatorBuilder:setDivider(divider)
+    Utils.assertBoolean(divider, "divider")
+    return setField(self, "divider", divider)
+end
+
+function SeparatorBuilder:setSpacing(spacing)
+    Utils.assertNumber(spacing, "spacing")
+    return setField(self, "spacing", spacing)
+end
+
+function SeparatorBuilder:toJSON()
+    return copyMap(self.data)
+end
+
+local SectionBuilder = {}
+SectionBuilder.__index = SectionBuilder
+
+function SectionBuilder.new()
+    return setmetatable({
+        data = {
+            type = Constants.ComponentType.Section,
+            components = {}
+        }
+    }, SectionBuilder)
+end
+
+function SectionBuilder:addTextDisplay(textDisplay)
+    local component = getJSON(textDisplay, "textDisplay")
+
+    if component.type ~= Constants.ComponentType.TextDisplay then
+        error("section child must be a text display", 2)
+    end
+
+    local data = copyMap(self.data)
+    local components = data.components or {}
+    table.insert(components, component)
+    data.components = components
+
+    return setmetatable({ data = data }, SectionBuilder)
+end
+
+function SectionBuilder:setAccessory(accessory)
+    local component = getJSON(accessory, "accessory")
+
+    if component.type ~= Constants.ComponentType.Button and component.type ~= Constants.ComponentType.Thumbnail then
+        error("section accessory must be a button or thumbnail", 2)
+    end
+
+    return setField(self, "accessory", component)
+end
+
+function SectionBuilder:toJSON()
+    if #self.data.components == 0 then
+        error("section must contain at least one text display", 2)
+    end
+
+    Utils.assertTable(self.data.accessory, "section.accessory")
+    return copyMap(self.data)
+end
+
+local ContainerBuilder = {}
+ContainerBuilder.__index = ContainerBuilder
+
+local CONTAINER_TYPES = {
+    [Constants.ComponentType.ActionRow] = true,
+    [Constants.ComponentType.TextDisplay] = true,
+    [Constants.ComponentType.Section] = true,
+    [Constants.ComponentType.Separator] = true
+}
+
+function ContainerBuilder.new()
+    return setmetatable({
+        data = {
+            type = Constants.ComponentType.Container,
+            components = {}
+        }
+    }, ContainerBuilder)
+end
+
+function ContainerBuilder:addComponent(component)
+    local componentData = getJSON(component, "component")
+
+    if not CONTAINER_TYPES[componentData.type] then
+        error(("unsupported container component type: %s"):format(tostring(componentData.type)), 2)
+    end
+
+    local data = copyMap(self.data)
+    local components = data.components or {}
+    table.insert(components, componentData)
+    data.components = components
+
+    return setmetatable({ data = data }, ContainerBuilder)
+end
+
+function ContainerBuilder:setAccentColor(color)
+    Utils.assertNumber(color, "color")
+    return setField(self, "accent_color", color)
+end
+
+function ContainerBuilder:toJSON()
+    if #self.data.components == 0 then
+        error("container must contain at least one component", 2)
+    end
+
+    return copyMap(self.data)
+end
+
+local MessageBuilder = {}
+MessageBuilder.__index = MessageBuilder
+
+function MessageBuilder.new()
+    return setmetatable({
+        data = {
+            flags = Constants.MessageFlags.IsComponentsV2,
+            components = {}
+        }
+    }, MessageBuilder)
+end
+
+function MessageBuilder:addComponent(component)
+    local data = copyMap(self.data)
+    local components = data.components or {}
+    table.insert(components, getJSON(component, "component"))
+    data.components = components
+
+    return setmetatable({ data = data }, MessageBuilder)
+end
+
+function MessageBuilder:setEphemeral(ephemeral)
+    Utils.assertBoolean(ephemeral, "ephemeral")
+    return setField(self, "ephemeral", ephemeral)
+end
+
+function MessageBuilder:toJSON()
+    if #self.data.components == 0 then
+        error("message must contain at least one component", 2)
+    end
+
+    return {
+        components = Utils.arrayCopy(self.data.components),
+        ephemeral = self.data.ephemeral == true,
+        flags = self.data.flags
+    }
+end
+
+Builders.SlashCommandBuilder = SlashCommandBuilder
+Builders.SlashCommandOptionBuilder = SlashCommandOptionBuilder
+Builders.EmbedBuilder = EmbedBuilder
+Builders.ButtonBuilder = ButtonBuilder
+Builders.ActionRowBuilder = ActionRowBuilder
+Builders.TextDisplayBuilder = TextDisplayBuilder
+Builders.ThumbnailBuilder = ThumbnailBuilder
+Builders.SeparatorBuilder = SeparatorBuilder
+Builders.SectionBuilder = SectionBuilder
+Builders.ContainerBuilder = ContainerBuilder
+Builders.MessageBuilder = MessageBuilder
+
+Builders.OptionType = Constants.OptionType
+Builders.ComponentType = Constants.ComponentType
+Builders.ButtonStyle = Constants.ButtonStyle
+Builders.SeparatorSpacing = Constants.SeparatorSpacing
+Builders.MessageFlags = Constants.MessageFlags
+
+return Builders
+end function __BUNDLER_FILES__.c():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.c if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.c=v end return v.c end end do local function __modImpl()
 
 
-local Utils = __BUNDLER_FILES__.a()
+local Utils = __BUNDLER_FILES__.b()
 
 local Runtime = {}
 
@@ -335,22 +884,22 @@ local function getValue(container, key)
     return nil
 end
 
-local function callMethod(target, methodName, ...)
-    local method = getValue(target, methodName)
-
-    if type(method) ~= "function" then
-        error(("Method %s is not available"):format(methodName), 3)
-    end
-
-    return method(target, ...)
-end
-
 local function assertObject(value, name)
     local valueType = type(value)
 
     if valueType ~= "table" and valueType ~= "userdata" then
-        error(("%s must be a table or userdata, got %s"):format(name, valueType), 3)
+        error(("%s must be table or userdata, got %s"):format(name, valueType), 3)
     end
+end
+
+local function callMethod(target, methodName, ...)
+    local method = getValue(target, methodName)
+
+    if type(method) ~= "function" then
+        error(("Method %s is unavailable"):format(methodName), 3)
+    end
+
+    return method(target, ...)
 end
 
 function Runtime.resolveRequest()
@@ -365,13 +914,13 @@ function Runtime.resolveRequest()
         getValue(syn, "request")
     }
 
-    for _, candidate in ipairs(candidates) do
-        if type(candidate) == "function" then
-            return candidate
+    for _, requestFunction in ipairs(candidates) do
+        if type(requestFunction) == "function" then
+            return requestFunction
         end
     end
 
-    error("No executor HTTP request function found. Expected request, http_request, http.request, or syn.request.", 2)
+    error("No HTTP request function found. Expected request, http_request, http.request, or syn.request.", 2)
 end
 
 function Runtime.resolveWebSocketConnect()
@@ -393,7 +942,7 @@ function Runtime.resolveWebSocketConnect()
         end
     end
 
-    error("No executor WebSocket connector found. Expected WebSocket.connect.", 2)
+    error("No WebSocket connector found. Expected WebSocket.connect.", 2)
 end
 
 function Runtime.connectEvent(target, eventName, callback)
@@ -417,7 +966,7 @@ function Runtime.connectEvent(target, eventName, callback)
         return
     end
 
-    error(("WebSocket event %s is not connectable. Expected %s:Connect(callback)."):format(eventName, eventName), 2)
+    error(("WebSocket event %s is not supported. Expected %s:Connect(callback)."):format(eventName, eventName), 2)
 end
 
 function Runtime.sendWebSocket(socket, payload)
@@ -452,13 +1001,13 @@ function Runtime.spawn(callback)
 
     local environment = getEnvironment()
     local taskLibrary = getValue(environment, "task")
-    local spawn = getValue(taskLibrary, "spawn") or getValue(environment, "spawn")
+    local spawnFunction = getValue(taskLibrary, "spawn") or getValue(environment, "spawn")
 
-    if type(spawn) ~= "function" then
-        error("No task spawn function found. Expected task.spawn or spawn.", 2)
+    if type(spawnFunction) ~= "function" then
+        error("No spawn function found. Expected task.spawn or spawn.", 2)
     end
 
-    return spawn(callback)
+    return spawnFunction(callback)
 end
 
 function Runtime.cancel(thread)
@@ -466,7 +1015,7 @@ function Runtime.cancel(thread)
     local taskLibrary = getValue(environment, "task")
     local cancel = getValue(taskLibrary, "cancel")
 
-    if type(cancel) == "function" and thread ~= nil then
+    if thread ~= nil and type(cancel) == "function" then
         cancel(thread)
     end
 end
@@ -476,15 +1025,10 @@ function Runtime.wait(seconds)
 
     local environment = getEnvironment()
     local taskLibrary = getValue(environment, "task")
-    local taskWait = getValue(taskLibrary, "wait")
-    local globalWait = getValue(environment, "wait")
+    local waitFunction = getValue(taskLibrary, "wait") or getValue(environment, "wait")
 
-    if type(taskWait) == "function" then
-        return taskWait(seconds)
-    end
-
-    if type(globalWait) == "function" then
-        return globalWait(seconds)
+    if type(waitFunction) == "function" then
+        return waitFunction(seconds)
     end
 
     error("No wait function found. Expected task.wait or wait.", 2)
@@ -503,7 +1047,7 @@ function Runtime.unpack(values, firstIndex, lastIndex)
         return unpackFunction(values, firstIndex, lastIndex)
     end
 
-    error("No table unpack function found. Expected table.unpack or unpack.", 2)
+    error("No unpack function found. Expected table.unpack or unpack.", 2)
 end
 
 function Runtime.warn(message, fields)
@@ -525,33 +1069,30 @@ function Runtime.warn(message, fields)
 end
 
 return Runtime
-end function __BUNDLER_FILES__.b():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.b if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.b=v end return v.c end end do local function __modImpl()
-local Runtime = __BUNDLER_FILES__.b()
-local Utils = __BUNDLER_FILES__.a()
+end function __BUNDLER_FILES__.d():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.d if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.d=v end return v.c end end do local function __modImpl()
+local Constants = __BUNDLER_FILES__.a()
+local Runtime = __BUNDLER_FILES__.d()
+local Utils = __BUNDLER_FILES__.b()
 
 local CommandHandler = {}
 CommandHandler.__index = CommandHandler
 
-local INTERACTION_APPLICATION_COMMAND = 2
-local INTERACTION_MESSAGE_COMPONENT = 3
-local OPTION_USER = 6
-
-local function commandPayload(options)
+local function commandData(options)
     if options.data then
-        local payload = Utils.toJSONValue(options.data, "options.data")
-        Utils.assertTable(payload, "options.data")
-        return payload
+        local data = Utils.toJSONValue(options.data, "options.data")
+        Utils.assertTable(data, "options.data")
+        return data
     end
 
     return {
-        type = 1,
+        type = Constants.ApplicationCommandType.ChatInput,
         name = options.name,
         description = options.description,
         options = options.options
     }
 end
 
-local function interactionUser(interaction)
+local function getUser(interaction)
     if interaction.member and interaction.member.user then
         return interaction.member.user
     end
@@ -573,37 +1114,13 @@ local function findOption(interaction, name)
     return nil
 end
 
-local function resolvedUser(interaction, option)
-    if not option or option.type ~= OPTION_USER then
-        return nil
-    end
-
-    if not interaction.data.resolved or not interaction.data.resolved.users then
-        return nil
-    end
-
-    return interaction.data.resolved.users[option.value]
-end
-
-local function resolvedMember(interaction, option)
-    if not option or option.type ~= OPTION_USER then
-        return nil
-    end
-
-    if not interaction.data.resolved or not interaction.data.resolved.members then
-        return nil
-    end
-
-    return interaction.data.resolved.members[option.value]
-end
-
-local function slashInteraction(self, interaction)
+local function createCommandInteraction(self, interaction)
     return {
         id = interaction.id,
         token = interaction.token,
         type = interaction.type,
         commandName = interaction.data and interaction.data.name or nil,
-        user = interactionUser(interaction),
+        user = getUser(interaction),
         member = interaction.member,
         guildId = interaction.guild_id,
         channelId = interaction.channel_id,
@@ -627,30 +1144,19 @@ local function slashInteraction(self, interaction)
 
         getOption = function(name)
             Utils.assertNonEmptyString(name, "name")
-
             local option = findOption(interaction, name)
             return option and option.value or nil
-        end,
-
-        getUser = function(name)
-            Utils.assertNonEmptyString(name, "name")
-            return resolvedUser(interaction, findOption(interaction, name))
-        end,
-
-        getMember = function(name)
-            Utils.assertNonEmptyString(name, "name")
-            return resolvedMember(interaction, findOption(interaction, name))
         end
     }
 end
 
-local function componentInteraction(self, interaction)
+local function createComponentInteraction(self, interaction)
     return {
         id = interaction.id,
         token = interaction.token,
         type = interaction.type,
         customId = interaction.data and interaction.data.custom_id or nil,
-        user = interactionUser(interaction),
+        user = getUser(interaction),
         member = interaction.member,
         guildId = interaction.guild_id,
         channelId = interaction.channel_id,
@@ -685,16 +1191,16 @@ function CommandHandler:registerCommand(options)
     Utils.assertTable(options, "options")
     Utils.assertFunction(options.execute, "options.execute")
 
-    local payload = commandPayload(options)
-    Utils.assertNonEmptyString(payload.name, "command.name")
-    Utils.assertNonEmptyString(payload.description, "command.description")
+    local data = commandData(options)
+    Utils.assertNonEmptyString(data.name, "command.name")
+    Utils.assertNonEmptyString(data.description, "command.description")
 
-    self.commands[payload.name] = {
-        data = payload,
+    self.commands[data.name] = {
+        data = data,
         execute = options.execute
     }
 
-    print(("[COMMAND] Loaded /%s"):format(payload.name))
+    print(("[COMMAND] Loaded /%s"):format(data.name))
     return self
 end
 
@@ -708,22 +1214,22 @@ function CommandHandler:registerButton(customId, execute)
 end
 
 function CommandHandler:registerAll()
-    local payloads = {}
+    local payload = {}
 
     for _, command in pairs(self.commands) do
-        table.insert(payloads, command.data)
+        table.insert(payload, command.data)
     end
 
-    self.rest:registerCommands(payloads)
-    print(("[COMMANDS] Registered %d command(s)"):format(#payloads))
+    self.rest:registerCommands(payload)
+    print(("[COMMANDS] Registered %d command(s)"):format(#payload))
 end
 
 function CommandHandler:handleInteraction(interaction)
     Utils.assertTable(interaction, "interaction")
 
-    if interaction.type == INTERACTION_APPLICATION_COMMAND then
+    if interaction.type == Constants.InteractionType.ApplicationCommand then
         self:handleCommand(interaction)
-    elseif interaction.type == INTERACTION_MESSAGE_COMPONENT then
+    elseif interaction.type == Constants.InteractionType.MessageComponent then
         self:handleComponent(interaction)
     end
 end
@@ -739,9 +1245,9 @@ function CommandHandler:handleCommand(interaction)
         return
     end
 
-    local wrappedInteraction = slashInteraction(self, interaction)
+    local wrapped = createCommandInteraction(self, interaction)
     local success, err = pcall(function()
-        command.execute(wrappedInteraction)
+        command.execute(wrapped)
     end)
 
     if success then
@@ -751,7 +1257,7 @@ function CommandHandler:handleCommand(interaction)
     Runtime.warn(("[COMMAND] /%s failed: %s"):format(tostring(name), tostring(err)))
 
     pcall(function()
-        wrappedInteraction.reply({
+        wrapped.reply({
             content = "Command failed.",
             ephemeral = true
         })
@@ -771,7 +1277,7 @@ function CommandHandler:handleComponent(interaction)
     end
 
     local success, err = pcall(function()
-        execute(componentInteraction(self, interaction))
+        execute(createComponentInteraction(self, interaction))
     end)
 
     if not success then
@@ -780,31 +1286,20 @@ function CommandHandler:handleComponent(interaction)
 end
 
 return CommandHandler
-end function __BUNDLER_FILES__.c():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.c if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.c=v end return v.c end end do local function __modImpl()
-local Runtime = __BUNDLER_FILES__.b()
-local Utils = __BUNDLER_FILES__.a()
+end function __BUNDLER_FILES__.e():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.e if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.e=v end return v.c end end do local function __modImpl()
+local Constants = __BUNDLER_FILES__.a()
+local Runtime = __BUNDLER_FILES__.d()
+local Utils = __BUNDLER_FILES__.b()
 
 local Gateway = {}
 Gateway.__index = Gateway
 
-local GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
-local DEFAULT_INTENTS = 1
-
-local OP_DISPATCH = 0
-local OP_HEARTBEAT = 1
-local OP_IDENTIFY = 2
-local OP_RESUME = 6
-local OP_RECONNECT = 7
-local OP_INVALID_SESSION = 9
-local OP_HELLO = 10
-local OP_HEARTBEAT_ACK = 11
-
 local FATAL_CLOSE_CODES = {
-    [4004] = true,
-    [4010] = true,
-    [4011] = true,
-    [4013] = true,
-    [4014] = true
+    [Constants.CloseCode.AuthenticationFailed] = true,
+    [Constants.CloseCode.InvalidShard] = true,
+    [Constants.CloseCode.ShardingRequired] = true,
+    [Constants.CloseCode.InvalidIntents] = true,
+    [Constants.CloseCode.DisallowedIntents] = true
 }
 
 local function log(message)
@@ -815,7 +1310,7 @@ local function warnLog(message)
     Runtime.warn(("[GATEWAY] %s"):format(message))
 end
 
-local function gatewayUrl(url)
+local function normalizeGatewayUrl(url)
     Utils.assertNonEmptyString(url, "url")
 
     if string.find(url, "?", 1, true) then
@@ -825,7 +1320,7 @@ local function gatewayUrl(url)
     return url .. "?v=10&encoding=json"
 end
 
-local function shouldReconnect(code)
+local function canReconnect(code)
     if code == nil then
         return true
     end
@@ -842,10 +1337,10 @@ function Gateway.new(token, intents)
 
     local self = setmetatable({}, Gateway)
     self.token = token
-    self.intents = intents or DEFAULT_INTENTS
+    self.intents = intents or Constants.Discord.DefaultIntents
     self.ws = nil
-    self.state = "idle"
     self.events = {}
+    self.state = "idle"
     self.heartbeatInterval = nil
     self.heartbeatThread = nil
     self.lastSequence = nil
@@ -866,6 +1361,7 @@ function Gateway:on(eventName, callback)
     end
 
     table.insert(self.events[eventName], callback)
+    return self
 end
 
 function Gateway:emit(eventName, ...)
@@ -890,7 +1386,7 @@ function Gateway:send(op, data)
     Utils.assertNumber(op, "op")
 
     if not self.ws then
-        error(("Cannot send Discord Gateway opcode %s before websocket is open."):format(tostring(op)), 2)
+        error(("Cannot send gateway opcode %s before websocket is open."):format(tostring(op)), 2)
     end
 
     Runtime.sendWebSocket(self.ws, Utils.jsonEncode({
@@ -902,7 +1398,7 @@ end
 function Gateway:identify()
     log("Sending Identify")
 
-    self:send(OP_IDENTIFY, {
+    self:send(Constants.Opcode.Identify, {
         token = self.token,
         intents = self.intents,
         properties = {
@@ -915,10 +1411,9 @@ end
 
 function Gateway:resume()
     Utils.assertNonEmptyString(self.sessionId, "sessionId")
-
     log("Sending Resume")
 
-    self:send(OP_RESUME, {
+    self:send(Constants.Opcode.Resume, {
         token = self.token,
         session_id = self.sessionId,
         seq = self.lastSequence
@@ -927,7 +1422,7 @@ end
 
 function Gateway:heartbeat()
     self.lastHeartbeatAcked = false
-    self:send(OP_HEARTBEAT, self.lastSequence)
+    self:send(Constants.Opcode.Heartbeat, self.lastSequence)
 end
 
 function Gateway:stopHeartbeat()
@@ -993,24 +1488,20 @@ function Gateway:handlePayload(payload)
         self.lastSequence = payload.s
     end
 
-    log(("op=%s event=%s seq=%s"):format(
-        tostring(payload.op),
-        tostring(payload.t),
-        tostring(payload.s)
-    ))
+    log(("op=%s event=%s seq=%s"):format(tostring(payload.op), tostring(payload.t), tostring(payload.s)))
 
-    if payload.op == OP_HELLO then
+    if payload.op == Constants.Opcode.Hello then
         self:handleHello(payload.d)
-    elseif payload.op == OP_HEARTBEAT then
+    elseif payload.op == Constants.Opcode.Heartbeat then
         self:heartbeat()
-    elseif payload.op == OP_HEARTBEAT_ACK then
+    elseif payload.op == Constants.Opcode.HeartbeatAck then
         self.lastHeartbeatAcked = true
-    elseif payload.op == OP_DISPATCH then
+    elseif payload.op == Constants.Opcode.Dispatch then
         self:handleDispatch(payload.t, payload.d)
-    elseif payload.op == OP_RECONNECT then
+    elseif payload.op == Constants.Opcode.Reconnect then
         warnLog("Discord requested reconnect")
         self:reconnect(true)
-    elseif payload.op == OP_INVALID_SESSION then
+    elseif payload.op == Constants.Opcode.InvalidSession then
         warnLog(("Invalid session resumable=%s"):format(tostring(payload.d)))
         Runtime.wait(5)
         self:reconnect(payload.d == true)
@@ -1019,9 +1510,7 @@ end
 
 function Gateway:handleMessage(message)
     Utils.assertNonEmptyString(message, "message")
-
-    local payload = Utils.jsonDecode(message)
-    self:handlePayload(payload)
+    self:handlePayload(Utils.jsonDecode(message))
 end
 
 function Gateway:connectSocket(url, resume)
@@ -1029,12 +1518,14 @@ function Gateway:connectSocket(url, resume)
     Utils.assertBoolean(resume, "resume")
 
     local connect = Runtime.resolveWebSocketConnect()
+    local resolvedUrl = normalizeGatewayUrl(url)
+
     self.state = "connecting"
     self.resumeOnHello = resume
     self.intentionalClose = false
 
-    log(("Connecting %s"):format(gatewayUrl(url)))
-    self.ws = connect(gatewayUrl(url))
+    log(("Connecting %s"):format(resolvedUrl))
+    self.ws = connect(resolvedUrl)
 
     local socket = self.ws
 
@@ -1099,7 +1590,7 @@ function Gateway:reconnect(resume)
     self.sessionId = nil
     self.resumeGatewayUrl = nil
     self.lastSequence = nil
-    self:connectSocket(GATEWAY_URL, false)
+    self:connectSocket(Constants.Discord.GatewayUrl, false)
 end
 
 function Gateway:handleClose(code, reason)
@@ -1111,7 +1602,7 @@ function Gateway:handleClose(code, reason)
     self.state = "disconnected"
     self:emit("disconnect", code, reason)
 
-    if self.intentionalClose or not shouldReconnect(code) then
+    if self.intentionalClose or not canReconnect(code) then
         return
     end
 
@@ -1123,10 +1614,10 @@ end
 
 function Gateway:connect()
     if self.ws then
-        error("Gateway is already connected. Create another Client or call close before login again.", 2)
+        error("Gateway is already connected.", 2)
     end
 
-    self:connectSocket(GATEWAY_URL, false)
+    self:connectSocket(Constants.Discord.GatewayUrl, false)
 end
 
 function Gateway:close()
@@ -1136,14 +1627,13 @@ function Gateway:close()
 end
 
 return Gateway
-end function __BUNDLER_FILES__.d():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.d if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.d=v end return v.c end end do local function __modImpl()
-local Runtime = __BUNDLER_FILES__.b()
-local Utils = __BUNDLER_FILES__.a()
+end function __BUNDLER_FILES__.f():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.f if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.f=v end return v.c end end do local function __modImpl()
+local Constants = __BUNDLER_FILES__.a()
+local Runtime = __BUNDLER_FILES__.d()
+local Utils = __BUNDLER_FILES__.b()
 
 local Rest = {}
 Rest.__index = Rest
-
-local API_URL = "https://discord.com/api/v10"
 
 local function encodeBody(body)
     if body == nil then
@@ -1166,24 +1656,16 @@ local function isSuccess(response)
 end
 
 local function isRetryable(response, requestError)
-    if requestError then
-        return true
-    end
-
-    if not response then
+    if requestError or not response then
         return true
     end
 
     return response.StatusCode == 429 or response.StatusCode >= 500
 end
 
-local function restError(method, endpoint, response, requestError)
+local function formatError(method, endpoint, response, requestError)
     if requestError then
-        return ("Discord REST failed: method=%s endpoint=%s requestError=%s"):format(
-            method,
-            endpoint,
-            tostring(requestError)
-        )
+        return ("Discord REST failed: method=%s endpoint=%s requestError=%s"):format(method, endpoint, tostring(requestError))
     end
 
     return ("Discord REST failed: method=%s endpoint=%s status=%s body=%s"):format(
@@ -1210,20 +1692,20 @@ function Rest:requestJson(method, endpoint, body)
     Utils.assertNonEmptyString(method, "method")
     Utils.assertNonEmptyString(endpoint, "endpoint")
 
+    local requestFunction = self.request
+    if not requestFunction then
+        requestFunction = Runtime.resolveRequest()
+        self.request = requestFunction
+    end
+
     local lastResponse = nil
     local lastError = nil
-    local request = self.request
-
-    if not request then
-        request = Runtime.resolveRequest()
-        self.request = request
-    end
 
     for attempt = 1, self.maxRetries do
         local requestBody = encodeBody(body)
         local success, response = pcall(function()
-            return request({
-                Url = API_URL .. endpoint,
+            return requestFunction({
+                Url = Constants.Discord.ApiUrl .. endpoint,
                 Method = method,
                 Headers = {
                     ["Authorization"] = "Bot " .. self.token,
@@ -1246,7 +1728,7 @@ function Rest:requestJson(method, endpoint, body)
         end
 
         if attempt == self.maxRetries or not isRetryable(lastResponse, lastError) then
-            error(restError(method, endpoint, lastResponse, lastError), 2)
+            error(formatError(method, endpoint, lastResponse, lastError), 2)
         end
 
         Runtime.warn("[REST] retry", {
@@ -1260,7 +1742,7 @@ function Rest:requestJson(method, endpoint, body)
         Runtime.wait(attempt)
     end
 
-    error(restError(method, endpoint, lastResponse, lastError), 2)
+    error(formatError(method, endpoint, lastResponse, lastError), 2)
 end
 
 function Rest:registerCommands(commands)
@@ -1272,7 +1754,6 @@ function Rest:sendMessage(channelId, options, extraOptions)
     Utils.assertNonEmptyString(channelId, "channelId")
 
     local messageOptions = options
-
     if extraOptions ~= nil then
         Utils.assertTable(extraOptions, "extraOptions")
         messageOptions = Utils.deepCopy(extraOptions)
@@ -1289,35 +1770,6 @@ function Rest:sendMessage(channelId, options, extraOptions)
     })
 end
 
-function Rest:editMessage(channelId, messageId, options)
-    Utils.assertNonEmptyString(channelId, "channelId")
-    Utils.assertNonEmptyString(messageId, "messageId")
-
-    local message = Utils.normalizeEditOptions(options)
-
-    return self:requestJson("PATCH", "/channels/" .. channelId .. "/messages/" .. messageId, {
-        content = message.content,
-        embeds = message.embeds,
-        components = message.components,
-        flags = message.flags
-    })
-end
-
-function Rest:deleteMessage(channelId, messageId)
-    Utils.assertNonEmptyString(channelId, "channelId")
-    Utils.assertNonEmptyString(messageId, "messageId")
-
-    return self:requestJson("DELETE", "/channels/" .. channelId .. "/messages/" .. messageId)
-end
-
-function Rest:createReaction(channelId, messageId, emoji)
-    Utils.assertNonEmptyString(channelId, "channelId")
-    Utils.assertNonEmptyString(messageId, "messageId")
-    Utils.assertNonEmptyString(emoji, "emoji")
-
-    return self:requestJson("PUT", "/channels/" .. channelId .. "/messages/" .. messageId .. "/reactions/" .. emoji .. "/@me")
-end
-
 function Rest:replyInteraction(interactionId, interactionToken, options)
     Utils.assertNonEmptyString(interactionId, "interactionId")
     Utils.assertNonEmptyString(interactionToken, "interactionToken")
@@ -1325,7 +1777,7 @@ function Rest:replyInteraction(interactionId, interactionToken, options)
     local message = Utils.normalizeMessageOptions(options)
 
     return self:requestJson("POST", "/interactions/" .. interactionId .. "/" .. interactionToken .. "/callback", {
-        type = 4,
+        type = Constants.InteractionResponseType.ChannelMessageWithSource,
         data = {
             content = message.content,
             embeds = message.embeds,
@@ -1341,7 +1793,7 @@ function Rest:deferReply(interactionId, interactionToken, ephemeral)
     Utils.assertBoolean(ephemeral, "ephemeral")
 
     return self:requestJson("POST", "/interactions/" .. interactionId .. "/" .. interactionToken .. "/callback", {
-        type = 5,
+        type = Constants.InteractionResponseType.DeferredChannelMessageWithSource,
         data = {
             flags = Utils.resolveMessageFlags(nil, ephemeral)
         }
@@ -1368,7 +1820,7 @@ function Rest:updateInteraction(interactionId, interactionToken, options)
     local message = Utils.normalizeEditOptions(options)
 
     return self:requestJson("POST", "/interactions/" .. interactionId .. "/" .. interactionToken .. "/callback", {
-        type = 7,
+        type = Constants.InteractionResponseType.UpdateMessage,
         data = {
             content = message.content,
             embeds = message.embeds,
@@ -1383,22 +1835,22 @@ function Rest:deferUpdate(interactionId, interactionToken)
     Utils.assertNonEmptyString(interactionToken, "interactionToken")
 
     return self:requestJson("POST", "/interactions/" .. interactionId .. "/" .. interactionToken .. "/callback", {
-        type = 6
+        type = Constants.InteractionResponseType.DeferredUpdateMessage
     })
 end
 
 return Rest
-end function __BUNDLER_FILES__.e():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.e if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.e=v end return v.c end end do local function __modImpl()
-local CommandHandler = __BUNDLER_FILES__.c()
-local Gateway = __BUNDLER_FILES__.d()
-local Rest = __BUNDLER_FILES__.e()
-local Runtime = __BUNDLER_FILES__.b()
-local Utils = __BUNDLER_FILES__.a()
+end function __BUNDLER_FILES__.g():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.g if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.g=v end return v.c end end do local function __modImpl()
+local CommandHandler = __BUNDLER_FILES__.e()
+local Gateway = __BUNDLER_FILES__.f()
+local Rest = __BUNDLER_FILES__.g()
+local Runtime = __BUNDLER_FILES__.d()
+local Utils = __BUNDLER_FILES__.b()
 
 local Client = {}
 Client.__index = Client
 
-local function getUserTag(user)
+local function userTag(user)
     if not user then
         return "unknown"
     end
@@ -1423,9 +1875,9 @@ function Client.new(options)
     self.token = options.token
     self.applicationId = options.applicationId
     self.intents = options.intents
+    self.events = {}
     self.user = nil
     self.ready = false
-    self.events = {}
     self.rest = Rest.new(options.token, options.applicationId)
     self.commands = CommandHandler.new(self.rest)
     self.gateway = Gateway.new(options.token, options.intents)
@@ -1433,7 +1885,7 @@ function Client.new(options)
     self.gateway:on("READY", function(data)
         self.ready = true
         self.user = data.user
-        print(("[CLIENT] Ready as %s (%s)"):format(getUserTag(self.user), tostring(self.user and self.user.id)))
+        print(("[CLIENT] Ready as %s (%s)"):format(userTag(self.user), tostring(self.user and self.user.id)))
         self:emit("ready", data)
 
         Runtime.spawn(function()
@@ -1518,934 +1970,18 @@ function Client:destroy()
 end
 
 return Client
-end function __BUNDLER_FILES__.f():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.f if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.f=v end return v.c end end do local function __modImpl()
-local Utils = __BUNDLER_FILES__.a()
-
-local Builders = {}
-
-local APPLICATION_COMMAND_CHAT_INPUT = 1
-local COMPONENT_ACTION_ROW = 1
-local COMPONENT_BUTTON = 2
-local COMPONENT_STRING_SELECT = 3
-local COMPONENT_TEXT_INPUT = 4
-local COMPONENT_USER_SELECT = 5
-local COMPONENT_ROLE_SELECT = 6
-local COMPONENT_MENTIONABLE_SELECT = 7
-local COMPONENT_CHANNEL_SELECT = 8
-local COMPONENT_SECTION = 9
-local COMPONENT_TEXT_DISPLAY = 10
-local COMPONENT_THUMBNAIL = 11
-local COMPONENT_MEDIA_GALLERY = 12
-local COMPONENT_FILE = 13
-local COMPONENT_SEPARATOR = 14
-local COMPONENT_CONTAINER = 17
-
-local SEPARATOR_SPACING_SMALL = 1
-local SEPARATOR_SPACING_LARGE = 2
-local MESSAGE_FLAG_IS_COMPONENTS_V2 = 32768
-
-local OPTION_STRING = 3
-local OPTION_INTEGER = 4
-local OPTION_BOOLEAN = 5
-local OPTION_USER = 6
-local OPTION_CHANNEL = 7
-local OPTION_ROLE = 8
-local OPTION_MENTIONABLE = 9
-local OPTION_NUMBER = 10
-local OPTION_ATTACHMENT = 11
-
-local function copyArray(values)
-    local result = {}
-
-    for index, value in ipairs(values) do
-        result[index] = value
-    end
-
-    return result
-end
-
-local function copyMap(value)
-    local result = {}
-
-    for key, item in pairs(value) do
-        if type(item) == "table" then
-            result[key] = copyMap(item)
-        else
-            result[key] = item
-        end
-    end
-
-    return result
-end
-
-local function assertOptionalString(value, name)
-    if value ~= nil then
-        Utils.assertNonEmptyString(value, name)
-    end
-end
-
-local function assertOptionalBoolean(value, name)
-    if value ~= nil then
-        Utils.assertType(value, "boolean", name)
-    end
-end
-
-local function setField(builder, key, value)
-    local data = copyMap(builder.data)
-    data[key] = value
-
-    return setmetatable({ data = data }, getmetatable(builder))
-end
-
-local function getComponentData(component, name)
-    Utils.assertTable(component, name)
-    Utils.assertType(component.toJSON, "function", name .. ".toJSON")
-
-    return component:toJSON()
-end
-
-local function assertComponentType(componentData, allowedTypes, name)
-    if not allowedTypes[componentData.type] then
-        error(("%s has unsupported component type: %s"):format(name, tostring(componentData.type)), 3)
-    end
-end
-
-local function countComponents(componentData)
-    local count = 1
-
-    if componentData.components then
-        for _, child in ipairs(componentData.components) do
-            count = count + countComponents(child)
-        end
-    end
-
-    if componentData.accessory then
-        count = count + countComponents(componentData.accessory)
-    end
-
-    return count
-end
-
-local function isAttachmentUrl(url)
-    return string.sub(url, 1, 13) == "attachment://"
-end
-
-local SlashCommandOptionBuilder = {}
-SlashCommandOptionBuilder.__index = SlashCommandOptionBuilder
-
-function SlashCommandOptionBuilder.new(optionType)
-    Utils.assertType(optionType, "number", "optionType")
-
-    return setmetatable({
-        data = {
-            type = optionType
-        }
-    }, SlashCommandOptionBuilder)
-end
-
-function SlashCommandOptionBuilder:setName(name)
-    Utils.assertNonEmptyString(name, "name")
-
-    return setField(self, "name", name)
-end
-
-function SlashCommandOptionBuilder:setDescription(description)
-    Utils.assertNonEmptyString(description, "description")
-
-    return setField(self, "description", description)
-end
-
-function SlashCommandOptionBuilder:setRequired(required)
-    Utils.assertType(required, "boolean", "required")
-
-    return setField(self, "required", required)
-end
-
-function SlashCommandOptionBuilder:addChoice(name, value)
-    Utils.assertNonEmptyString(name, "name")
-
-    local data = copyMap(self.data)
-    local choices = data.choices and copyArray(data.choices) or {}
-
-    table.insert(choices, {
-        name = name,
-        value = value
-    })
-
-    data.choices = choices
-    return setmetatable({ data = data }, SlashCommandOptionBuilder)
-end
-
-function SlashCommandOptionBuilder:setMinValue(value)
-    Utils.assertType(value, "number", "value")
-
-    return setField(self, "min_value", value)
-end
-
-function SlashCommandOptionBuilder:setMaxValue(value)
-    Utils.assertType(value, "number", "value")
-
-    return setField(self, "max_value", value)
-end
-
-function SlashCommandOptionBuilder:setMinLength(value)
-    Utils.assertType(value, "number", "value")
-
-    return setField(self, "min_length", value)
-end
-
-function SlashCommandOptionBuilder:setMaxLength(value)
-    Utils.assertType(value, "number", "value")
-
-    return setField(self, "max_length", value)
-end
-
-function SlashCommandOptionBuilder:toJSON()
-    Utils.assertNonEmptyString(self.data.name, "option.name")
-    Utils.assertNonEmptyString(self.data.description, "option.description")
-
-    return copyMap(self.data)
-end
-
-local SlashCommandBuilder = {}
-SlashCommandBuilder.__index = SlashCommandBuilder
-
-function SlashCommandBuilder.new()
-    return setmetatable({
-        data = {
-            type = APPLICATION_COMMAND_CHAT_INPUT,
-            options = {}
-        }
-    }, SlashCommandBuilder)
-end
-
-function SlashCommandBuilder:setName(name)
-    Utils.assertNonEmptyString(name, "name")
-
-    return setField(self, "name", name)
-end
-
-function SlashCommandBuilder:setDescription(description)
-    Utils.assertNonEmptyString(description, "description")
-
-    return setField(self, "description", description)
-end
-
-function SlashCommandBuilder:addOption(optionType, configure)
-    Utils.assertType(optionType, "number", "optionType")
-    Utils.assertType(configure, "function", "configure")
-
-    local optionBuilder = configure(SlashCommandOptionBuilder.new(optionType))
-    Utils.assertTable(optionBuilder, "optionBuilder")
-    Utils.assertType(optionBuilder.toJSON, "function", "optionBuilder.toJSON")
-
-    local data = copyMap(self.data)
-    local options = data.options and copyArray(data.options) or {}
-    table.insert(options, optionBuilder:toJSON())
-    data.options = options
-
-    return setmetatable({ data = data }, SlashCommandBuilder)
-end
-
-function SlashCommandBuilder:addStringOption(configure)
-    return self:addOption(OPTION_STRING, configure)
-end
-
-function SlashCommandBuilder:addIntegerOption(configure)
-    return self:addOption(OPTION_INTEGER, configure)
-end
-
-function SlashCommandBuilder:addBooleanOption(configure)
-    return self:addOption(OPTION_BOOLEAN, configure)
-end
-
-function SlashCommandBuilder:addUserOption(configure)
-    return self:addOption(OPTION_USER, configure)
-end
-
-function SlashCommandBuilder:addChannelOption(configure)
-    return self:addOption(OPTION_CHANNEL, configure)
-end
-
-function SlashCommandBuilder:addRoleOption(configure)
-    return self:addOption(OPTION_ROLE, configure)
-end
-
-function SlashCommandBuilder:addMentionableOption(configure)
-    return self:addOption(OPTION_MENTIONABLE, configure)
-end
-
-function SlashCommandBuilder:addNumberOption(configure)
-    return self:addOption(OPTION_NUMBER, configure)
-end
-
-function SlashCommandBuilder:addAttachmentOption(configure)
-    return self:addOption(OPTION_ATTACHMENT, configure)
-end
-
-function SlashCommandBuilder:toJSON()
-    Utils.assertNonEmptyString(self.data.name, "command.name")
-    Utils.assertNonEmptyString(self.data.description, "command.description")
-
-    return copyMap(self.data)
-end
-
-local EmbedBuilder = {}
-EmbedBuilder.__index = EmbedBuilder
-
-function EmbedBuilder.new()
-    return setmetatable({
-        data = {
-            fields = {}
-        }
-    }, EmbedBuilder)
-end
-
-function EmbedBuilder:setTitle(title)
-    assertOptionalString(title, "title")
-
-    return setField(self, "title", title)
-end
-
-function EmbedBuilder:setDescription(description)
-    assertOptionalString(description, "description")
-
-    return setField(self, "description", description)
-end
-
-function EmbedBuilder:setColor(color)
-    Utils.assertType(color, "number", "color")
-
-    return setField(self, "color", color)
-end
-
-function EmbedBuilder:setURL(url)
-    assertOptionalString(url, "url")
-
-    return setField(self, "url", url)
-end
-
-function EmbedBuilder:setTimestamp(timestamp)
-    assertOptionalString(timestamp, "timestamp")
-
-    return setField(self, "timestamp", timestamp or os.date("!%Y-%m-%dT%H:%M:%S"))
-end
-
-function EmbedBuilder:setThumbnail(url)
-    Utils.assertNonEmptyString(url, "url")
-
-    return setField(self, "thumbnail", { url = url })
-end
-
-function EmbedBuilder:setImage(url)
-    Utils.assertNonEmptyString(url, "url")
-
-    return setField(self, "image", { url = url })
-end
-
-function EmbedBuilder:setFooter(options)
-    Utils.assertTable(options, "options")
-    Utils.assertNonEmptyString(options.text, "options.text")
-
-    local footer = {
-        text = options.text,
-        icon_url = options.iconUrl
-    }
-
-    return setField(self, "footer", footer)
-end
-
-function EmbedBuilder:setAuthor(options)
-    Utils.assertTable(options, "options")
-    Utils.assertNonEmptyString(options.name, "options.name")
-
-    local author = {
-        name = options.name,
-        icon_url = options.iconUrl,
-        url = options.url
-    }
-
-    return setField(self, "author", author)
-end
-
-function EmbedBuilder:addField(name, value, inline)
-    Utils.assertNonEmptyString(name, "name")
-    Utils.assertNonEmptyString(value, "value")
-    assertOptionalBoolean(inline, "inline")
-
-    local data = copyMap(self.data)
-    local fields = data.fields and copyArray(data.fields) or {}
-
-    table.insert(fields, {
-        name = name,
-        value = value,
-        inline = inline == true
-    })
-
-    data.fields = fields
-    return setmetatable({ data = data }, EmbedBuilder)
-end
-
-function EmbedBuilder:toJSON()
-    local data = copyMap(self.data)
-
-    if data.fields and #data.fields == 0 then
-        data.fields = nil
-    end
-
-    return data
-end
-
-local ButtonBuilder = {}
-ButtonBuilder.__index = ButtonBuilder
-
-function ButtonBuilder.new()
-    return setmetatable({
-        data = {
-            type = COMPONENT_BUTTON
-        }
-    }, ButtonBuilder)
-end
-
-function ButtonBuilder:setCustomId(customId)
-    Utils.assertNonEmptyString(customId, "customId")
-
-    local data = copyMap(self.data)
-    data.custom_id = customId
-
-    if data.style == Builders.ButtonStyle.Link then
-        data.style = Builders.ButtonStyle.Primary
-        data.url = nil
-    end
-
-    return setmetatable({ data = data }, ButtonBuilder)
-end
-
-function ButtonBuilder:setLabel(label)
-    Utils.assertNonEmptyString(label, "label")
-
-    return setField(self, "label", label)
-end
-
-function ButtonBuilder:setStyle(style)
-    Utils.assertType(style, "number", "style")
-
-    return setField(self, "style", style)
-end
-
-function ButtonBuilder:setEmoji(emoji)
-    Utils.assertTable(emoji, "emoji")
-
-    return setField(self, "emoji", emoji)
-end
-
-function ButtonBuilder:setURL(url)
-    Utils.assertNonEmptyString(url, "url")
-
-    local data = copyMap(self.data)
-    data.url = url
-    data.custom_id = nil
-    data.style = Builders.ButtonStyle.Link
-
-    return setmetatable({ data = data }, ButtonBuilder)
-end
-
-function ButtonBuilder:setDisabled(disabled)
-    Utils.assertType(disabled, "boolean", "disabled")
-
-    return setField(self, "disabled", disabled)
-end
-
-function ButtonBuilder:toJSON()
-    local data = copyMap(self.data)
-
-    if data.style == nil then
-        data.style = Builders.ButtonStyle.Primary
-    end
-
-    if data.style == Builders.ButtonStyle.Link then
-        Utils.assertNonEmptyString(data.url, "button.url")
-        data.custom_id = nil
-    elseif data.url == nil then
-        Utils.assertNonEmptyString(data.custom_id, "button.custom_id")
-    else
-        error("button.url is only valid for link buttons", 2)
-    end
-
-    return data
-end
-
-local ACTION_ROW_CHILD_COMPONENT_TYPES = {
-    [COMPONENT_BUTTON] = true,
-    [COMPONENT_STRING_SELECT] = true,
-    [COMPONENT_USER_SELECT] = true,
-    [COMPONENT_ROLE_SELECT] = true,
-    [COMPONENT_MENTIONABLE_SELECT] = true,
-    [COMPONENT_CHANNEL_SELECT] = true
-}
-
-local ActionRowBuilder = {}
-ActionRowBuilder.__index = ActionRowBuilder
-
-function ActionRowBuilder.new()
-    return setmetatable({
-        data = {
-            type = COMPONENT_ACTION_ROW,
-            components = {}
-        }
-    }, ActionRowBuilder)
-end
-
-function ActionRowBuilder:addComponent(component)
-    local componentData = getComponentData(component, "component")
-    assertComponentType(componentData, ACTION_ROW_CHILD_COMPONENT_TYPES, "component")
-
-    local data = copyMap(self.data)
-    local components = data.components and copyArray(data.components) or {}
-
-    if componentData.type == COMPONENT_BUTTON then
-        if #components >= 5 then
-            error("actionRow.components cannot contain more than five buttons", 2)
-        end
-
-        if components[1] and components[1].type ~= COMPONENT_BUTTON then
-            error("actionRow.components cannot mix buttons and select menus", 2)
-        end
-    else
-        if #components > 0 then
-            error("actionRow.components can contain only one select menu", 2)
-        end
-    end
-
-    table.insert(components, componentData)
-    data.components = components
-
-    return setmetatable({ data = data }, ActionRowBuilder)
-end
-
-function ActionRowBuilder:toJSON()
-    if #self.data.components == 0 then
-        error("actionRow.components must contain at least one component", 2)
-    end
-
-    return copyMap(self.data)
-end
-
-local TextDisplayBuilder = {}
-TextDisplayBuilder.__index = TextDisplayBuilder
-
-function TextDisplayBuilder.new()
-    return setmetatable({
-        data = {
-            type = COMPONENT_TEXT_DISPLAY
-        }
-    }, TextDisplayBuilder)
-end
-
-function TextDisplayBuilder:setContent(content)
-    Utils.assertNonEmptyString(content, "content")
-
-    return setField(self, "content", content)
-end
-
-function TextDisplayBuilder:toJSON()
-    Utils.assertNonEmptyString(self.data.content, "textDisplay.content")
-
-    return copyMap(self.data)
-end
-
-local ThumbnailBuilder = {}
-ThumbnailBuilder.__index = ThumbnailBuilder
-
-function ThumbnailBuilder.new()
-    return setmetatable({
-        data = {
-            type = COMPONENT_THUMBNAIL
-        }
-    }, ThumbnailBuilder)
-end
-
-function ThumbnailBuilder:setURL(url)
-    Utils.assertNonEmptyString(url, "url")
-
-    return setField(self, "media", { url = url })
-end
-
-function ThumbnailBuilder:setDescription(description)
-    Utils.assertNonEmptyString(description, "description")
-
-    return setField(self, "description", description)
-end
-
-function ThumbnailBuilder:setSpoiler(spoiler)
-    Utils.assertType(spoiler, "boolean", "spoiler")
-
-    return setField(self, "spoiler", spoiler)
-end
-
-function ThumbnailBuilder:toJSON()
-    Utils.assertTable(self.data.media, "thumbnail.media")
-    Utils.assertNonEmptyString(self.data.media.url, "thumbnail.media.url")
-
-    return copyMap(self.data)
-end
-
-local MediaGalleryBuilder = {}
-MediaGalleryBuilder.__index = MediaGalleryBuilder
-
-function MediaGalleryBuilder.new()
-    return setmetatable({
-        data = {
-            type = COMPONENT_MEDIA_GALLERY,
-            items = {}
-        }
-    }, MediaGalleryBuilder)
-end
-
-function MediaGalleryBuilder:addItem(options)
-    Utils.assertTable(options, "options")
-    Utils.assertNonEmptyString(options.url, "options.url")
-    assertOptionalString(options.description, "options.description")
-    assertOptionalBoolean(options.spoiler, "options.spoiler")
-
-    local data = copyMap(self.data)
-    local items = data.items and copyArray(data.items) or {}
-
-    table.insert(items, {
-        media = {
-            url = options.url
-        },
-        description = options.description,
-        spoiler = options.spoiler == true
-    })
-
-    data.items = items
-    return setmetatable({ data = data }, MediaGalleryBuilder)
-end
-
-function MediaGalleryBuilder:toJSON()
-    if #self.data.items == 0 then
-        error("mediaGallery.items must contain at least one item", 2)
-    end
-
-    if #self.data.items > 10 then
-        error("mediaGallery.items must contain no more than ten items", 2)
-    end
-
-    return copyMap(self.data)
-end
-
-local FileBuilder = {}
-FileBuilder.__index = FileBuilder
-
-function FileBuilder.new()
-    return setmetatable({
-        data = {
-            type = COMPONENT_FILE
-        }
-    }, FileBuilder)
-end
-
-function FileBuilder:setURL(url)
-    Utils.assertNonEmptyString(url, "url")
-
-    if not isAttachmentUrl(url) then
-        error("file.url must use attachment://<filename>", 2)
-    end
-
-    return setField(self, "file", { url = url })
-end
-
-function FileBuilder:setSpoiler(spoiler)
-    Utils.assertType(spoiler, "boolean", "spoiler")
-
-    return setField(self, "spoiler", spoiler)
-end
-
-function FileBuilder:toJSON()
-    Utils.assertTable(self.data.file, "file.file")
-    Utils.assertNonEmptyString(self.data.file.url, "file.file.url")
-
-    return copyMap(self.data)
-end
-
-local SeparatorBuilder = {}
-SeparatorBuilder.__index = SeparatorBuilder
-
-function SeparatorBuilder.new()
-    return setmetatable({
-        data = {
-            type = COMPONENT_SEPARATOR
-        }
-    }, SeparatorBuilder)
-end
-
-function SeparatorBuilder:setDivider(divider)
-    Utils.assertType(divider, "boolean", "divider")
-
-    return setField(self, "divider", divider)
-end
-
-function SeparatorBuilder:setSpacing(spacing)
-    Utils.assertType(spacing, "number", "spacing")
-
-    return setField(self, "spacing", spacing)
-end
-
-function SeparatorBuilder:toJSON()
-    return copyMap(self.data)
-end
-
-local SECTION_CHILD_COMPONENT_TYPES = {
-    [COMPONENT_TEXT_DISPLAY] = true
-}
-
-local SECTION_ACCESSORY_COMPONENT_TYPES = {
-    [COMPONENT_BUTTON] = true,
-    [COMPONENT_THUMBNAIL] = true
-}
-
-local SectionBuilder = {}
-SectionBuilder.__index = SectionBuilder
-
-function SectionBuilder.new()
-    return setmetatable({
-        data = {
-            type = COMPONENT_SECTION,
-            components = {}
-        }
-    }, SectionBuilder)
-end
-
-function SectionBuilder:addTextDisplay(textDisplay)
-    local component = getComponentData(textDisplay, "textDisplay")
-    assertComponentType(component, SECTION_CHILD_COMPONENT_TYPES, "textDisplay")
-
-    local data = copyMap(self.data)
-    local components = data.components and copyArray(data.components) or {}
-
-    table.insert(components, component)
-    data.components = components
-
-    return setmetatable({ data = data }, SectionBuilder)
-end
-
-function SectionBuilder:setAccessory(accessory)
-    local component = getComponentData(accessory, "accessory")
-    assertComponentType(component, SECTION_ACCESSORY_COMPONENT_TYPES, "accessory")
-
-    return setField(self, "accessory", component)
-end
-
-function SectionBuilder:toJSON()
-    if #self.data.components == 0 then
-        error("section.components must contain at least one text display", 2)
-    end
-
-    if #self.data.components > 3 then
-        error("section.components must contain no more than three text displays", 2)
-    end
-
-    Utils.assertTable(self.data.accessory, "section.accessory")
-
-    return copyMap(self.data)
-end
-
-local CONTAINER_CHILD_COMPONENT_TYPES = {
-    [COMPONENT_ACTION_ROW] = true,
-    [COMPONENT_TEXT_DISPLAY] = true,
-    [COMPONENT_SECTION] = true,
-    [COMPONENT_MEDIA_GALLERY] = true,
-    [COMPONENT_SEPARATOR] = true,
-    [COMPONENT_FILE] = true
-}
-
-local ContainerBuilder = {}
-ContainerBuilder.__index = ContainerBuilder
-
-function ContainerBuilder.new()
-    return setmetatable({
-        data = {
-            type = COMPONENT_CONTAINER,
-            components = {}
-        }
-    }, ContainerBuilder)
-end
-
-function ContainerBuilder:addComponent(component)
-    local componentData = getComponentData(component, "component")
-    assertComponentType(componentData, CONTAINER_CHILD_COMPONENT_TYPES, "component")
-
-    local data = copyMap(self.data)
-    local components = data.components and copyArray(data.components) or {}
-
-    if #components >= 10 then
-        error("container.components cannot contain more than ten components", 2)
-    end
-
-    table.insert(components, componentData)
-    data.components = components
-
-    return setmetatable({ data = data }, ContainerBuilder)
-end
-
-function ContainerBuilder:setAccentColor(color)
-    Utils.assertType(color, "number", "color")
-
-    return setField(self, "accent_color", color)
-end
-
-function ContainerBuilder:setSpoiler(spoiler)
-    Utils.assertType(spoiler, "boolean", "spoiler")
-
-    return setField(self, "spoiler", spoiler)
-end
-
-function ContainerBuilder:toJSON()
-    if #self.data.components == 0 then
-        error("container.components must contain at least one component", 2)
-    end
-
-    return copyMap(self.data)
-end
-
-local MessageBuilder = {}
-MessageBuilder.__index = MessageBuilder
-
-local MESSAGE_TOP_LEVEL_COMPONENT_TYPES = {
-    [COMPONENT_ACTION_ROW] = true,
-    [COMPONENT_TEXT_DISPLAY] = true,
-    [COMPONENT_SECTION] = true,
-    [COMPONENT_MEDIA_GALLERY] = true,
-    [COMPONENT_FILE] = true,
-    [COMPONENT_SEPARATOR] = true,
-    [COMPONENT_CONTAINER] = true
-}
-
-function MessageBuilder.new()
-    return setmetatable({
-        data = {
-            flags = MESSAGE_FLAG_IS_COMPONENTS_V2,
-            components = {}
-        }
-    }, MessageBuilder)
-end
-
-function MessageBuilder:addComponent(component)
-    local componentData = getComponentData(component, "component")
-    assertComponentType(componentData, MESSAGE_TOP_LEVEL_COMPONENT_TYPES, "component")
-
-    local data = copyMap(self.data)
-    local components = data.components and copyArray(data.components) or {}
-
-    table.insert(components, componentData)
-    data.components = components
-
-    return setmetatable({ data = data }, MessageBuilder)
-end
-
-function MessageBuilder:setEphemeral(ephemeral)
-    Utils.assertType(ephemeral, "boolean", "ephemeral")
-
-    local data = copyMap(self.data)
-    data.ephemeral = ephemeral
-
-    return setmetatable({ data = data }, MessageBuilder)
-end
-
-function MessageBuilder:toJSON()
-    if #self.data.components == 0 then
-        error("message.components must contain at least one component", 2)
-    end
-
-    local componentCount = 0
-    for _, component in ipairs(self.data.components) do
-        componentCount = componentCount + countComponents(component)
-    end
-
-    if componentCount > 40 then
-        error("message.components cannot contain more than forty total components", 2)
-    end
-
-    return {
-        components = copyArray(self.data.components),
-        ephemeral = self.data.ephemeral == true,
-        flags = self.data.flags
-    }
-end
-
-Builders.SlashCommandBuilder = SlashCommandBuilder
-Builders.SlashCommandOptionBuilder = SlashCommandOptionBuilder
-Builders.EmbedBuilder = EmbedBuilder
-Builders.ButtonBuilder = ButtonBuilder
-Builders.ActionRowBuilder = ActionRowBuilder
-Builders.MessageBuilder = MessageBuilder
-Builders.TextDisplayBuilder = TextDisplayBuilder
-Builders.SectionBuilder = SectionBuilder
-Builders.ThumbnailBuilder = ThumbnailBuilder
-Builders.MediaGalleryBuilder = MediaGalleryBuilder
-Builders.FileBuilder = FileBuilder
-Builders.SeparatorBuilder = SeparatorBuilder
-Builders.ContainerBuilder = ContainerBuilder
-
-Builders.OptionType = {
-    String = OPTION_STRING,
-    Integer = OPTION_INTEGER,
-    Boolean = OPTION_BOOLEAN,
-    User = OPTION_USER,
-    Channel = OPTION_CHANNEL,
-    Role = OPTION_ROLE,
-    Mentionable = OPTION_MENTIONABLE,
-    Number = OPTION_NUMBER,
-    Attachment = OPTION_ATTACHMENT
-}
-
-Builders.ButtonStyle = {
-    Primary = 1,
-    Secondary = 2,
-    Success = 3,
-    Danger = 4,
-    Link = 5
-}
-
-Builders.ComponentType = {
-    ActionRow = COMPONENT_ACTION_ROW,
-    Button = COMPONENT_BUTTON,
-    StringSelect = COMPONENT_STRING_SELECT,
-    TextInput = COMPONENT_TEXT_INPUT,
-    UserSelect = COMPONENT_USER_SELECT,
-    RoleSelect = COMPONENT_ROLE_SELECT,
-    MentionableSelect = COMPONENT_MENTIONABLE_SELECT,
-    ChannelSelect = COMPONENT_CHANNEL_SELECT,
-    Section = COMPONENT_SECTION,
-    TextDisplay = COMPONENT_TEXT_DISPLAY,
-    Thumbnail = COMPONENT_THUMBNAIL,
-    MediaGallery = COMPONENT_MEDIA_GALLERY,
-    File = COMPONENT_FILE,
-    Separator = COMPONENT_SEPARATOR,
-    Container = COMPONENT_CONTAINER
-}
-
-Builders.MessageFlags = {
-    IsComponentsV2 = MESSAGE_FLAG_IS_COMPONENTS_V2
-}
-
-Builders.SeparatorSpacing = {
-    Small = SEPARATOR_SPACING_SMALL,
-    Large = SEPARATOR_SPACING_LARGE
-}
-
-return Builders
-end function __BUNDLER_FILES__.g():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.g if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.g=v end return v.c end end end
-local Client = __BUNDLER_FILES__.f()
-local Utils = __BUNDLER_FILES__.a()
-local Builders = __BUNDLER_FILES__.g()
-local Runtime = __BUNDLER_FILES__.b()
+end function __BUNDLER_FILES__.h():typeof(__modImpl())local v=__BUNDLER_FILES__.cache.h if not v then v={c=__modImpl()}__BUNDLER_FILES__.cache.h=v end return v.c end end end
+local Builders = __BUNDLER_FILES__.c()
+local Client = __BUNDLER_FILES__.h()
+local Constants = __BUNDLER_FILES__.a()
+local Runtime = __BUNDLER_FILES__.d()
+local Utils = __BUNDLER_FILES__.b()
 
 return {
     Builders = Builders,
     Client = Client,
+    Constants = Constants,
     Runtime = Runtime,
     Utils = Utils,
-    version = "1.0.0"
+    version = "2.0.0"
 }
